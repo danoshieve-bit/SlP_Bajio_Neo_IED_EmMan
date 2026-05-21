@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: bajio-dashboard
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:server --workers 2 --threads 2 --timeout 120
+    envVars:
+      - key: INEGI_TOKEN
+        value: 2c63db48-9a6a-4468-be5b-8ab85da04eb6
+      - key: PYTHON_VERSION
+        value: 3.11.0

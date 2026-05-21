@@ -274,7 +274,6 @@ def simular_empleo_nacional() -> pd.DataFrame:
         for q in range(1,5):
             if yr==2025 and q>1: break
             t=(yr-2015)*4+q
-            # Caída fuerte en 2020 Q2
             factor = 0.85 if yr==2020 and q==2 else 1.0
             rows.append({"Año":yr,"Trimestre":q,"Empleo_Nacional": int(4200000 * (1+0.005*t) * factor)})
     return pd.DataFrame(rows)
@@ -298,7 +297,6 @@ def cargar_geojson():
             r=requests.get(url,timeout=10)
             if r.status_code==200: return r.json()
         except Exception: continue
-    # GeoJSON fallback embebido omitido para brevedad (se asume carga correcta del URL)
     return {"type":"FeatureCollection","features":[]} 
 
 # Caché
@@ -401,13 +399,31 @@ def fig_series(df, variable, estados, tipo="line"):
         "xaxis":dict(tickangle=-45,tickfont_size=9),"height":300, "barmode": "stack" if tipo=="bar" else "group"})
     return fig
 
+def fig_mapa(df,variable,estados,yr_to,geojson):
+    col=VAR_COL.get(variable,"Empleo_Manufacturero")
+    sub=df[(df["Estado"].isin(estados))&(df["Año"]==yr_to)]
+    grp=sub.groupby("Estado")[col].mean().reset_index().rename(columns={col:"valor"})
+    all_e=pd.DataFrame({"Estado":list(ESTADOS_BAJIO.keys())})
+    grp=all_e.merge(grp,on="Estado",how="left")
+    fig=go.Figure(go.Choropleth(
+        geojson=geojson,locations=grp["Estado"],z=grp["valor"],
+        featureidkey="properties.name",
+        colorscale=[[0,"#B5D4F4"],[0.5,"#1A5599"],[1,"#0C3460"]],
+        marker_line_color="white",marker_line_width=1.5,
+        colorbar=dict(title=dict(text=VAR_LABEL[variable],font_size=10),thickness=12,len=0.7),
+        hovertemplate="<b>%{location}</b><br>"+VAR_LABEL[variable]+": %{z:,.1f}<extra></extra>",
+    ))
+    fig.update_geos(fitbounds="locations",visible=False,showland=True,landcolor="#F5F3EF",showframe=False)
+    fig.update_layout(**{**PLOT_LAYOUT,"height":300,"margin":dict(l=0,r=0,t=10,b=0)})
+    return fig
+
 def fig_scatter_avanzado(df, var_x, var_y, estados, mostrar_tendencia):
     col_x = VAR_COL.get(var_x, "IED")
     col_y = VAR_COL.get(var_y, "Empleo_Manufacturero")
     
     sub = df[df["Estado"].isin(estados)]
     
-    # 🌟 MEJORA: Scatter interactivo con OLS global usando Plotly Express
+    # Scatter interactivo con OLS global usando Plotly Express
     fig = px.scatter(
         sub, x=col_x, y=col_y, color="Estado", 
         color_discrete_map=COLORES_ESTADOS, hover_data=["Periodo"],
@@ -477,7 +493,6 @@ app.layout = html.Div(
                     html.Span("—",style={"color":TEXT_SEC}),
                     dcc.Dropdown(id="year-to",options=[{"label":str(y),"value":y} for y in AÑOS_DISPONIBLES],value=AÑOS_DISPONIBLES[-1],clearable=False,style={"width":"90px","fontSize":"13px"}),
                 ]),
-                # 🌟 MEJORA: Filtro para excluir año de pandemia
                 dcc.Checklist(id="omitir-2020", options=[{"label":" Omitir año 2020 (Efecto COVID)", "value":"si"}], value=[], style={"fontSize":"11px", "marginTop":"8px", "color":NARANJA})
             ]),
             html.Div([
@@ -497,22 +512,20 @@ app.layout = html.Div(
                 html.P("Serie de tiempo trimestral",style=STYLE_SEC_HDR),
                 html.P(id="series-sub",style=STYLE_SUB),
             ]),
-            # 🌟 MEJORA: Selector de tipo de gráfica
             dcc.RadioItems(id="tipo-grafica", options=[{"label":" Líneas  ","value":"line"},{"label":" Barras Apiladas","value":"bar"}], value="line", inline=True, style={"fontSize":"12px"})
         ]),
         dcc.Graph(id="series-chart",config={"displayModeBar":False}),
     ]),
 
-    # Mapa + Scatter Avanzado
+    # 🌟 ¡RESTAURADO! Mapa + Scatter Avanzado
     html.Div(style={"display":"grid","gridTemplateColumns":"1fr 1fr","gap":"14px","marginBottom":"14px"},children=[
         html.Div(style=STYLE_CARD,children=[
-            html.P("Patrón estacional por trimestre",style=STYLE_SEC_HDR),
-            html.P("Promedio del período seleccionado",style=STYLE_SUB),
-            dcc.Graph(id="heatmap-chart",config={"displayModeBar":False}),
+            html.P("Mapa del Bajío",style=STYLE_SEC_HDR),
+            html.P(id="map-sub",style=STYLE_SUB),
+            dcc.Graph(id="map-chart",config={"displayModeBar":False}),
         ]),
         html.Div(style=STYLE_CARD,children=[
             html.P("Análisis de Dispersión (Cruce de Variables)",style=STYLE_SEC_HDR),
-            # 🌟 MEJORA: Scatter dinámico
             html.Div(style={"display":"flex", "gap":"10px", "margin":"10px 0 0 14px", "alignItems":"center"}, children=[
                 dcc.Dropdown(id="scatter-x", options=[{"label":l, "value":v} for v,l in VARS_DEF], value="ied", clearable=False, style={"width":"130px","fontSize":"11px"}),
                 html.Span("vs", style={"fontSize":"11px", "color":TEXT_SEC}),
@@ -523,6 +536,14 @@ app.layout = html.Div(
         ]),
     ]),
 
+    # Heatmap estacional
+    html.Div(style=STYLE_CARD,children=[
+        html.P("Patrón estacional por trimestre",style=STYLE_SEC_HDR),
+        html.P("Promedio del período seleccionado",style=STYLE_SUB),
+        dcc.Graph(id="heatmap-chart",config={"displayModeBar":False}),
+    ]),
+
+    # Tabla del panel
     html.Div(style=STYLE_CARD,children=[
         html.P("Tabla del panel",style=STYLE_SEC_HDR),
         html.P(id="tabla-sub",style=STYLE_SUB),
@@ -541,7 +562,6 @@ app.layout = html.Div(
         html.P("Ecuación estimada:",style={"fontSize":"12px","color":TEXT_SEC,"margin":"0 0 6px"}),
         html.P("Δ% Empleo_it = β₀ + β₁·(Δ% IED) + β₂·(Δ% ActInd) + β₃·(Δ% Exp) + μᵢ + λₜ + εᵢₜ",
                style={"fontSize":"14px","fontWeight":"500","color":AZUL_OSCURO,"fontFamily":"monospace","margin":"0 0 4px"}),
-        # 🌟 MEJORA: Checklist interactivo de variables independientes
         html.Div(style={"marginTop":"10px", "display":"flex", "alignItems":"center", "gap":"15px"}, children=[
             html.Span("Variables Independientes activas:", style={"fontSize":"12px", "fontWeight":"500"}),
             dcc.Checklist(id="eco-vars", 
@@ -558,11 +578,20 @@ app.layout = html.Div(
         ]),
         html.Div(style=STYLE_CARD,children=[
             html.P("Auditoría del Modelo",style=STYLE_SEC_HDR),
-            # 🌟 MEJORA: Explicación con Tooltips (atributo title)
             html.P("Pasa el mouse sobre el título de las pruebas para ver su interpretación", style=STYLE_SUB),
             html.Div(id="robustez-panel"),
         ]),
     ]),
+
+    # 🌟 ¡RESTAURADA! Matriz de correlación
+    html.Div(style=STYLE_CARD,children=[
+        html.P("Matriz de correlación de Pearson (Tasas de Crecimiento)",style=STYLE_SEC_HDR),
+        html.P("Mide la relación lineal entre las variables del modelo en el período seleccionado",style=STYLE_SUB),
+        dcc.Graph(id="corr-chart",config={"displayModeBar":False}),
+    ]),
+    
+    html.P("Fuentes: INEGI (EMIM · BIE-BISE) · Secretaría de Economía · Modelo: PanelOLS (linearmodels 7.0) · Errores clusterizados por entidad",
+           style={"fontSize":"11px","color":TEXT_SEC,"textAlign":"center","marginTop":"10px"}),
 ])
 
 # ══════════════════════════════════════════════
@@ -613,12 +642,15 @@ def toggle_var(_,av):
 @app.callback(
     Output("metrics-row","children"),
     Output("series-chart","figure"),
+    Output("map-chart","figure"),
     Output("heatmap-chart","figure"),
     Output("scatter-chart","figure"),
     Output("tabla-panel","children"),
     Output("tabla-regresion","children"),
     Output("robustez-panel","children"),
+    Output("corr-chart","figure"),
     Output("series-sub","children"),
+    Output("map-sub","children"),
     Output("tabla-sub","children"),
     Input("active-estados","data"),
     Input("active-var","data"),
@@ -635,13 +667,11 @@ def update_all(estados, variable, yr_from, yr_to, omitir_2020, tipo_graf, scat_x
     panel, nacional, geojson = get_datos()
     df = panel[(panel["Estado"].isin(estados)) & (panel["Año"]>=yr_from) & (panel["Año"]<=yr_to)].copy()
     
-    # 🌟 MEJORA: Filtro Omitir 2020
     if "si" in omitir_2020:
         df = df[df["Año"] != 2020]
         
     n_obs = len(df)
 
-    # 🌟 MEJORA: KPI Nacional
     emp_bajio = int(df.groupby(["Año","Trimestre"])["Empleo_Manufacturero"].sum().mean()) if n_obs else 0
     emp_nac_prom = int(nacional[(nacional["Año"]>=yr_from)&(nacional["Año"]<=yr_to)]["Empleo_Nacional"].mean()) if not nacional.empty else 4500000
     peso_nac = (emp_bajio / emp_nac_prom * 100) if emp_nac_prom > 0 else 0
@@ -664,6 +694,7 @@ def update_all(estados, variable, yr_from, yr_to, omitir_2020, tipo_graf, scat_x
     ]) for l,v,s in metrics]
 
     f_series = fig_series(df, variable, estados, tipo_graf)
+    f_mapa = fig_mapa(df, variable, estados, yr_to, geojson)
     f_heat = fig_heatmap(df, variable, estados)
     f_scat = fig_scatter_avanzado(df, scat_x, scat_y, estados, bool(scat_trend))
 
@@ -689,13 +720,13 @@ def update_all(estados, variable, yr_from, yr_to, omitir_2020, tipo_graf, scat_x
         ],style={"borderBottom":"0.5px solid #EEE"}))
     tabla = html.Table([html.Thead(header),html.Tbody(rows_h)],style={"width":"100%","borderCollapse":"collapse"})
 
-    # 🌟 MEJORA: Econometría dinámica
+    # Econometría dinámica
     eco = calcular_econometria(df, eco_vars)
     no_data = html.P("Selecciona al menos 1 variable independiente y un período válido.",style={"fontSize":"12px","color":TEXT_SEC,"padding":"10px"})
     
     if eco is None:
-        return (metric_cards, f_series, f_heat, f_scat, tabla, no_data, no_data, 
-                VAR_LABEL[variable], f"{n_obs} obs · últimas 60")
+        return (metric_cards, f_series, f_mapa, f_heat, f_scat, tabla, no_data, no_data, go.Figure(),
+                VAR_LABEL[variable], f"Intensidad promedio {yr_to} · {VAR_LABEL[variable]}", f"{n_obs} obs · últimas 60")
 
     var_names = {f"Crec_{k}": f"Δ% {v}" for k,v in {"IED":"IED", "ActInd":"Actividad Ind.", "Exportaciones":"Exportaciones"}.items()}
     hdr_r = html.Tr([html.Th(c,style={"fontWeight":"500","fontSize":"10px","color":TEXT_SEC,"padding":"5px 10px","borderBottom":"1px solid #DDD","textAlign":al}) for c,al in [("Variable","left"),("Coeficiente","right"),("P-value","right")]])
@@ -741,8 +772,10 @@ def update_all(estados, variable, yr_from, yr_to, omitir_2020, tipo_graf, scat_x
         html.Div(vif_items),
     ])
 
-    return (metric_cards, f_series, f_heat, f_scat, tabla, tabla_reg, robustez, 
-            VAR_LABEL[variable], f"{n_obs} obs · últimas 60")
+    f_corr = fig_correlacion(eco["corr"])
+
+    return (metric_cards, f_series, f_mapa, f_heat, f_scat, tabla, tabla_reg, robustez, f_corr,
+            VAR_LABEL[variable], f"Intensidad promedio {yr_to} · {VAR_LABEL[variable]}", f"{n_obs} obs · últimas 60")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT",8050))

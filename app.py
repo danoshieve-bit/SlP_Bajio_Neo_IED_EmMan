@@ -66,11 +66,11 @@ PLOT_LAYOUT = dict(
 )
 
 INDICADORES_EMPLEO = {
-    "Aguascalientes":  "702139",
-    "Guanajuato":      "702139",
-    "Jalisco":         "702139",
-    "Querétaro":       "702139",
-    "San Luis Potosí": "702139",
+    "Aguascalientes":  "702845",
+    "Guanajuato":      "702855",
+    "Jalisco":         "702858",
+    "Querétaro":       "702866",
+    "San Luis Potosí": "702868",
 }
 
 INDICADORES_ACTIND = {
@@ -206,12 +206,11 @@ def procesar_empleo() -> pd.DataFrame:
     for estado,ind in INDICADORES_EMPLEO.items():
         print(f"   → {estado}")
         
-        # --- EL TRUCO QUE TÚ DESCUBRISTE ---
-        codigo_geo = ESTADOS_BAJIO[estado]
-        df = fetch_inegi_serie(ind, fuente="BIE-BISE", geo=codigo_geo)
-        # -----------------------------------
+        # Consultamos el ID exacto del estado sin "trucos" de geo
+        df = fetch_inegi_serie(ind, fuente="BIE-BISE") 
         
         if df.empty:
+            print(f"   [!] Falló extracción para {estado}. Usando simulación.")
             sim = _sim_empleo_mensual(estado)
             sim["Estado"]=estado; sim["Año"]=sim["fecha"].dt.year; sim["Mes"]=sim["fecha"].dt.month
             sim=sim[(sim["Año"]>=2015)&(sim["Año"]<=2025)]
@@ -220,9 +219,12 @@ def procesar_empleo() -> pd.DataFrame:
         else:
             df["Estado"]=estado
             df_t=_mensual_a_trimestral(df.drop(columns=["Estado"],errors="ignore"),estado,"Empleo_Manufacturero")
+            
         df_t["Empleo_Manufacturero"]=df_t["Empleo_Manufacturero"].round(0).astype(int)
         frames.append(df_t)
+        
     return pd.concat(frames,ignore_index=True)
+    
 def procesar_ied() -> pd.DataFrame:
     try:
         r=requests.get(SE_IED_URL,timeout=15); r.raise_for_status()

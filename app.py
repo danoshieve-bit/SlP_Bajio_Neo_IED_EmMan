@@ -316,13 +316,9 @@ def procesar_exportaciones() -> pd.DataFrame:
     for estado,ind in INDICADORES_EXPORTACIONES.items():
         print(f"   → {estado}")
         
-        # --- SOLUCIÓN APLICADA ---
-        # 1. Obtenemos la clave de 2 dígitos (ej. "01" para Aguascalientes)
-        codigo_geo = ESTADOS_BAJIO[estado]
-        
-        # 2. Obligamos a la función a usar el estado real en lugar de "00"
-        df = fetch_inegi_serie(ind, fuente="BIE-BISE", geo=codigo_geo)
-        # -------------------------
+        # Volvemos a la consulta original. La API usará "00" por defecto, 
+        # lo cual es perfecto porque el ID ya incluye el estado.
+        df = fetch_inegi_serie(ind, fuente="BIE-BISE")
         
         if not df.empty:
             df_t=_parse_trimestral(df,estado,"Exportaciones")

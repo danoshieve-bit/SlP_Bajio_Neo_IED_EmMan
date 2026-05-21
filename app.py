@@ -91,7 +91,7 @@ INDICADORES_ACTIND = {
 
 # Exportaciones manufactureras — REEMPLAZAR con IDs reales del BIE por estado
 INDICADORES_EXPORTACIONES = {
-    "Aguascalientes":  "924",
+    "Aguascalientes":  "127595",
     "Guanajuato":      "739277",
     "Jalisco":         "739278",
     "Querétaro":       "739279",

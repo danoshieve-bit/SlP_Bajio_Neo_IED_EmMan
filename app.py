@@ -66,11 +66,11 @@ PLOT_LAYOUT = dict(
 )
 
 INDICADORES_EMPLEO = {
-    "Aguascalientes":  "6207064389",
-    "Guanajuato":      "6207064407",
-    "Jalisco":         "6207064416",
-    "Querétaro":       "6207064443",
-    "San Luis Potosí": "6207064447",
+    "Aguascalientes":  "702139",
+    "Guanajuato":      "702139",
+    "Jalisco":         "702139",
+    "Querétaro":       "702139",
+    "San Luis Potosí": "702139",
 }
 
 INDICADORES_ACTIND = {
@@ -201,9 +201,16 @@ def _sim_exportaciones() -> pd.DataFrame:
 # ETL REAL CON FALLBACK
 # ══════════════════════════════════════════════
 def procesar_empleo() -> pd.DataFrame:
+    print("📥 Empleo manufacturero (INEGI EMIM)...")
     frames = []
     for estado,ind in INDICADORES_EMPLEO.items():
-        df = fetch_inegi_serie(ind)
+        print(f"   → {estado}")
+        
+        # --- EL TRUCO QUE TÚ DESCUBRISTE ---
+        codigo_geo = ESTADOS_BAJIO[estado]
+        df = fetch_inegi_serie(ind, fuente="BIE-BISE", geo=codigo_geo)
+        # -----------------------------------
+        
         if df.empty:
             sim = _sim_empleo_mensual(estado)
             sim["Estado"]=estado; sim["Año"]=sim["fecha"].dt.year; sim["Mes"]=sim["fecha"].dt.month
@@ -216,7 +223,6 @@ def procesar_empleo() -> pd.DataFrame:
         df_t["Empleo_Manufacturero"]=df_t["Empleo_Manufacturero"].round(0).astype(int)
         frames.append(df_t)
     return pd.concat(frames,ignore_index=True)
-
 def procesar_ied() -> pd.DataFrame:
     try:
         r=requests.get(SE_IED_URL,timeout=15); r.raise_for_status()

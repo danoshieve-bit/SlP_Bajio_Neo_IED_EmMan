@@ -295,7 +295,12 @@ def procesar_actind() -> pd.DataFrame:
     frames = []
     for estado,ind in INDICADORES_ACTIND.items():
         print(f"   → {estado}")
-        df=fetch_inegi_serie(ind,fuente="BIE-BISE")
+        
+        # --- SOLUCIÓN APLICADA ---
+        codigo_geo = ESTADOS_BAJIO[estado]
+        df = fetch_inegi_serie(ind, fuente="BIE-BISE", geo=codigo_geo)
+        # -------------------------
+        
         if df.empty:
             frames.append(_sim_actind()[lambda d: d["Estado"]==estado])
         else:
@@ -310,7 +315,15 @@ def procesar_exportaciones() -> pd.DataFrame:
     frames = []
     for estado,ind in INDICADORES_EXPORTACIONES.items():
         print(f"   → {estado}")
-        df=fetch_inegi_serie(ind,fuente="BIE-BISE")
+        
+        # --- SOLUCIÓN APLICADA ---
+        # 1. Obtenemos la clave de 2 dígitos (ej. "01" para Aguascalientes)
+        codigo_geo = ESTADOS_BAJIO[estado]
+        
+        # 2. Obligamos a la función a usar el estado real en lugar de "00"
+        df = fetch_inegi_serie(ind, fuente="BIE-BISE", geo=codigo_geo)
+        # -------------------------
+        
         if not df.empty:
             df_t=_parse_trimestral(df,estado,"Exportaciones")
             if not df_t.empty:

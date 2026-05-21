@@ -66,7 +66,7 @@ PLOT_LAYOUT = dict(
 )
 
 INDICADORES_EMPLEO = {
-    "Aguascalientes":  "702845",
+    "Aguascalientes":  "702846",
     "Guanajuato":      "702855",
     "Jalisco":         "702858",
     "Querétaro":       "702866",

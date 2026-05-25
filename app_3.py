@@ -1,5 +1,5 @@
 """
-Dashboard Econométrico — Región del Bajío (VERSIÓN PRO)
+ Econométrico — Región del Bajío (VERSIÓN PRO)
 ========================================================
 UI: Tabs, Full Width, Animación Hans Rosling, Área Chart
 ETL/Caché/Econometría: sin cambios

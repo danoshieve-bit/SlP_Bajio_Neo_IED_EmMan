@@ -3,6 +3,7 @@ Dashboard Econométrico — Región del Bajío (VERSIÓN ESTRICTA CSV)
 ========================================================
 UI: Fondo Crema, Pregunta de Investigación, Lags, DataTable.
 ETL: IED desde CSV Local, Actividad Eliminada, Cero Simulaciones.
+Fixes: Mapa Inteligente (retrocede si no hay datos), Animación Blindada.
 """
 
 import os
@@ -85,7 +86,6 @@ GEOJSON_URLS = [
     "https://raw.githubusercontent.com/angelnmara/geojson/master/mexicoHigh.json",
 ]
 
-# ACTIVIDAD ELIMINADA DE AQUÍ:
 VARS_DEF   = [("empleo","Empleo Manufacturero"),("ied","Inversión Extranjera Directa (IED)"),("exportaciones","Exportaciones Manufactureras")]
 VAR_COL    = {"empleo":"Empleo_Manufacturero","ied":"IED","exportaciones":"Exportaciones"}
 VAR_LABEL  = {
@@ -149,7 +149,6 @@ def procesar_empleo():
                 frames.append(df_t)
     return pd.concat(frames,ignore_index=True) if frames else pd.DataFrame(columns=["Estado","Año","Trimestre","Empleo_Manufacturero"])
 
-# FUNCIÓN ACTUALIZADA A CSV LOCAL
 def procesar_ied():
     print("📁 Cargando IED desde archivo local (ied_historica.csv)...")
     try:
@@ -200,7 +199,6 @@ def procesar_exportaciones():
             if not df_t.empty: frames.append(df_t)
     return pd.concat(frames,ignore_index=True) if frames else pd.DataFrame(columns=["Estado","Año","Trimestre","Exportaciones"])
 
-# ACTIVIDAD ELIMINADA DEL CONSTRUCTOR
 def construir_panel(df_emp,df_ied,df_exp):
     keys=["Estado","Año","Trimestre"]
     panel=pd.merge(df_emp, df_ied, on=keys, how="left")
@@ -310,7 +308,7 @@ def calcular_econometria(df, vars_x, lags=0):
             "df_pred": df_pred}
 
 # ══════════════════════════════════════════════
-# FIGURAS
+# FIGURAS (NUEVO: MAPA INTELIGENTE Y ANIMACIÓN BLINDADA)
 # ══════════════════════════════════════════════
 H_CHART = 450
 
@@ -341,25 +339,38 @@ def fig_series(df, variable, estados, tipo="line"):
         "barmode":"group"})
     return fig
 
+# FIX #1: MAPA INTELIGENTE (RETROCEDE DE AÑO SI NO HAY DATOS)
 def fig_mapa(df, variable, estados, yr_to, geojson):
     col=VAR_COL.get(variable,"Empleo_Manufacturero")
     if col not in df.columns or df.empty: return go.Figure().update_layout(**PLOT_LAYOUT, title="Datos no disponibles")
     
-    sub=df[(df["Estado"].isin(estados))&(df["Año"]==yr_to)]
+    sub = df[df["Estado"].isin(estados)].copy()
+    
+    # Busca el año más reciente disponible que sea menor o igual a yr_to
+    valid_years = sub.dropna(subset=[col])["Año"].unique()
+    actual_yr = yr_to
+    if len(valid_years) > 0 and yr_to not in valid_years:
+        actual_yr = max(y for y in valid_years if y <= yr_to)
+    elif len(valid_years) == 0:
+        return go.Figure().update_layout(**PLOT_LAYOUT, title=f"Sin datos para el mapa de {VAR_LABEL[variable]}")
+        
+    sub = sub[sub["Año"] == actual_yr]
     grp=sub.groupby("Estado")[col].mean().reset_index().rename(columns={col:"valor"})
     grp=pd.DataFrame({"Estado":list(ESTADOS_BAJIO.keys())}).merge(grp,on="Estado",how="left")
+    
     fig=go.Figure(go.Choropleth(
         geojson=geojson,locations=grp["Estado"],z=grp["valor"],
         featureidkey="properties.name",
         colorscale=[[0,"#B5D4F4"],[0.5,"#1A5599"],[1,"#0C3460"]],
         marker_line_color="white",marker_line_width=1.5,
         colorbar=dict(title=dict(text=VAR_LABEL[variable],font_size=10),thickness=14,len=0.75),
-        hovertemplate="<b>%{location}</b><br>"+VAR_LABEL[variable]+": %{z:,.1f}<extra></extra>",
+        hovertemplate="<b>%{location}</b><br>"+VAR_LABEL[variable]+f" ({actual_yr}): %{{z:,.1f}}<extra></extra>",
     ))
     fig.update_geos(fitbounds="locations",visible=False,showland=True,landcolor="#F5F3EF",showframe=False)
     fig.update_layout(**{**PLOT_LAYOUT,"height":H_CHART,"margin":dict(l=0,r=0,t=20,b=0)})
     return fig
 
+# FIX #2: ANIMACIÓN BLINDADA (EVITA EL COLAPSO CON FFILL)
 def fig_scatter_animado(df, var_x, var_y, estados):
     col_x=VAR_COL.get(var_x,"IED")
     col_y=VAR_COL.get(var_y,"Empleo_Manufacturero")
@@ -371,9 +382,27 @@ def fig_scatter_animado(df, var_x, var_y, estados):
         size_col=("Empleo_Manufacturero","mean")
     ).reset_index()
     
+    # Relleno matemático para evitar que Plotly se rompa si falta 1 estado en 1 año
+    all_years = sorted(sub_anual["Año"].unique())
+    idx = pd.MultiIndex.from_product([estados, all_years], names=['Estado', 'Año'])
+    sub_anual = sub_anual.set_index(['Estado', 'Año']).reindex(idx).reset_index()
+    
+    sub_anual["x"] = sub_anual.groupby("Estado")["x"].transform(lambda v: v.ffill().bfill()).fillna(0)
+    sub_anual["y"] = sub_anual.groupby("Estado")["y"].transform(lambda v: v.ffill().bfill()).fillna(0)
+    sub_anual["size_col"] = sub_anual.groupby("Estado")["size_col"].transform(lambda v: v.ffill().bfill()).fillna(10)
+
     max_size = sub_anual["size_col"].max()
     sub_anual["size_col"] = (sub_anual["size_col"] / max_size * 60 + 10).round(1) if pd.notna(max_size) and max_size > 0 else 10
     sub_anual["Año_str"] = sub_anual["Año"].astype(str)
+    sub_anual = sub_anual.sort_values(["Año", "Estado"])
+
+    # Ejes estables
+    min_x, max_x = sub_anual["x"].min(), sub_anual["x"].max()
+    min_y, max_y = sub_anual["y"].min(), sub_anual["y"].max()
+    pad_x = (max_x - min_x) * 0.1 if pd.notna(min_x) and max_x != min_x else 10
+    pad_y = (max_y - min_y) * 0.1 if pd.notna(min_y) and max_y != min_y else 10
+    rx = [min_x - pad_x, max_x + pad_x] if pd.notna(min_x) else [0, 100]
+    ry = [min_y - pad_y, max_y + pad_y] if pd.notna(min_y) else [0, 100]
 
     fig = px.scatter(
         sub_anual, x="x", y="y",
@@ -381,6 +410,7 @@ def fig_scatter_animado(df, var_x, var_y, estados):
         animation_frame="Año_str",
         color_discrete_map=COLORES_ESTADOS,
         hover_name="Estado",
+        range_x=rx, range_y=ry,
         labels={"x": VAR_LABEL[var_x], "y": VAR_LABEL[var_y], "Año_str":"Año"},
         size_max=55,
     )

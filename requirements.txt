@@ -8,3 +8,5 @@ gunicorn==21.2.0
 statsmodels
 linearmodels
 scipy
+flask-caching
+dash-extensions

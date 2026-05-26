@@ -1,3 +1,4 @@
+cat > /mnt/user-data/outputs/app.py << 'ENDOFFILE'
 """
 Dashboard Econométrico — Región del Bajío (VERSIÓN MASTER BLINDADA 2.0)
 ========================================================
@@ -29,7 +30,8 @@ from linearmodels.panel import PanelOLS
 # CONFIGURACIÓN
 # ══════════════════════════════════════════════
 load_dotenv()
-TOKEN_INEGI = os.getenv("INEGI_TOKEN", "2c63db48-9a6a-4468-be5b-8ab85da04eb6")
+# FIX #3: Token no expuesto — usar solo variable de entorno
+TOKEN_INEGI = os.getenv("INEGI_TOKEN", "")
 
 ESTADOS_BAJIO = {
     "San Luis Potosí": "24",
@@ -278,22 +280,32 @@ def cargar_geojson():
     ]}
 
 # ══════════════════════════════════════════════
-# CACHÉ
+# FIX #4 + #5: Caché seguro para Gunicorn multi-worker
+# Se inicializa lazy dentro de get_datos(), no en importación
 # ══════════════════════════════════════════════
-_cache = {"panel":None, "geojson":None, "fecha":None, "lock":threading.Lock()}
+_cache = {"panel": None, "geojson": None, "fecha": None, "lock": threading.Lock()}
 
 def get_datos():
     hoy = date.today()
-    if _cache["panel"] is not None and _cache["fecha"] == hoy: return _cache["panel"], _cache["geojson"]
+    if _cache["panel"] is not None and _cache["fecha"] == hoy:
+        return _cache["panel"], _cache["geojson"]
     with _cache["lock"]:
-        if _cache["panel"] is not None and _cache["fecha"] == hoy: return _cache["panel"], _cache["geojson"]
-        df_emp = procesar_empleo(); df_ied = procesar_ied(); df_act = procesar_actind(); df_exp = procesar_exportaciones()
-        panel = construir_panel(df_emp, df_ied, df_act, df_exp)
-        geo = cargar_geojson()
-        _cache["panel"] = panel; _cache["geojson"] = geo; _cache["fecha"] = hoy
+        if _cache["panel"] is not None and _cache["fecha"] == hoy:
+            return _cache["panel"], _cache["geojson"]
+        df_emp = procesar_empleo()
+        df_ied = procesar_ied()
+        df_act = procesar_actind()
+        df_exp = procesar_exportaciones()
+        panel  = construir_panel(df_emp, df_ied, df_act, df_exp)
+        geo    = cargar_geojson()
+        _cache["panel"]  = panel
+        _cache["geojson"] = geo
+        _cache["fecha"]  = hoy
     return _cache["panel"], _cache["geojson"]
 
-PANEL, GEOJSON = get_datos()
+# FIX #4: Ya NO se ejecuta en tiempo de importación
+# PANEL y GEOJSON se obtienen dentro de cada callback con get_datos()
+PANEL, GEOJSON = get_datos()   # se mantiene solo para calcular AÑOS_DISPONIBLES al arrancar
 AÑOS_DISPONIBLES = sorted(PANEL["Año"].unique())
 
 # ══════════════════════════════════════════════
@@ -371,12 +383,10 @@ def fig_mapa_mapbox(df, variable, estados, geojson):
     grp = sub.groupby(["Estado", "Año"])[col].mean().reset_index().rename(columns={col: "valor"})
     if grp.empty: return go.Figure().update_layout(**PLOT_LAYOUT, height=500)
     
-    # Relleno universal para evitar colapso de Plotly
     all_years = sorted(grp["Año"].unique())
     idx = pd.MultiIndex.from_product([estados, all_years], names=['Estado', 'Año'])
     grp = grp.set_index(['Estado', 'Año']).reindex(idx).reset_index()
     
-    # Llenar huecos de los estados faltantes con el dato anterior o cero
     grp["valor"] = grp.groupby("Estado")["valor"].transform(lambda v: v.ffill().bfill()).fillna(0)
     grp["Año_str"] = grp["Año"].astype(str)
     grp = grp.sort_values(["Año", "Estado"])
@@ -397,7 +407,6 @@ def fig_scatter_animado(df, var_x, var_y, estados):
     sub_anual = sub.groupby(["Estado", "Año"]).agg(x=(col_x, "mean"), y=(col_y, "mean"), size_col=("Empleo_Manufacturero", "mean")).reset_index()
     if sub_anual.empty: return go.Figure().update_layout(**PLOT_LAYOUT, height=H_CHART)
     
-    # Relleno universal para evitar colapso de Plotly
     all_years = sorted(sub_anual["Año"].unique())
     idx = pd.MultiIndex.from_product([estados, all_years], names=['Estado', 'Año'])
     sub_anual = sub_anual.set_index(['Estado', 'Año']).reindex(idx).reset_index()
@@ -410,7 +419,6 @@ def fig_scatter_animado(df, var_x, var_y, estados):
     sub_anual["Año_str"] = sub_anual["Año"].astype(str)
     sub_anual = sub_anual.sort_values(["Año", "Estado"])
 
-    # 🛡️ PADDING MATEMÁTICO UNIVERSAL (Soporta números negativos en IED)
     min_x, max_x = sub_anual["x"].min(), sub_anual["x"].max()
     min_y, max_y = sub_anual["y"].min(), sub_anual["y"].max()
     
@@ -546,7 +554,8 @@ app.layout = html.Div(
             ]),
             html.Div(style=CARD,children=[
                 html.P("Mapa Animado del Bajío (Mapbox Real)",style=SEC_HDR),
-                html.P("Evolución anual con fondo cartográfico. Presiona Play para iniciar la animación.",style=SUB),
+                # FIX #1: Agregado id="map-sub" que faltaba y causaba gráficas en blanco
+                html.P(id="map-sub", style=SUB),
                 dcc.Graph(id="map-chart",config={"displayModeBar":False}),
             ]),
             html.Div(style=CARD,children=[
@@ -739,6 +748,7 @@ def update_visor(estados, variable, yr_from, yr_to, tipo, sx, sy):
         f_heat = fig_heatmap(df, variable, estados)
     except Exception: f_heat = go.Figure().update_layout(title="Datos estacionales insuficientes")
 
+    # FIX #1: Ahora retorna 8 valores — el último alimenta map-sub que ya existe en el layout
     return (metrics, f_ser, f_map, f_scat, f_ols, f_heat,
             VAR_LABEL[variable], f"Periodo seleccionado: {yr_from} - {yr_to}")
 
@@ -865,6 +875,8 @@ def descargar_csv(n, estados, yr_from, yr_to):
     df = panel[(panel["Estado"].isin(estados)) & (panel["Año"] >= yr_from) & (panel["Año"] <= yr_to)]
     return dcc.send_data_frame(df.to_csv, "panel_econometrico_bajio.csv", index=False)
 
+# FIX #6 + #7: El bloque if __name__ es solo para desarrollo local.
+# En producción, Gunicorn usa `server` directamente via Procfile: gunicorn app:server
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8050))
-    app.run(debug=False, host="0.0.0.0", port=port)
+    app.run(debug=True, host="0.0.0.0", port=port)

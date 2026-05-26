@@ -1,9 +1,9 @@
 """
-Dashboard Econométrico — Región del Bajío (VERSIÓN ESTRICTA - CERO SIMULACIÓN)
+Dashboard Econométrico — Región del Bajío (VERSIÓN ESTRICTA CORREGIDA)
 ========================================================
 UI: Fondo Crema, Pregunta de Investigación, Lags, DataTable.
-ETL: Estricto. Solo datos reales de INEGI y SE. Si falla, retorna vacío.
-Visor: Base original estable.
+ETL: Claves INEGI restauradas, IED a 45s.
+Visor: Barras agrupadas (no apiladas).
 """
 
 import os
@@ -65,6 +65,7 @@ PLOT_LAYOUT = dict(
     legend=dict(orientation="h", y=-0.15, x=0, font_size=11),
 )
 
+# 1. CLAVES ORIGINALES RESTAURADAS (Mi error corregido)
 INDICADORES_EMPLEO = {
     "Aguascalientes":  "702846",
     "Guanajuato":      "702855",
@@ -86,6 +87,7 @@ INDICADORES_EXPORTACIONES = {
     "Querétaro":       "739279",
     "San Luis Potosí": "739280",
 }
+
 SE_IED_URL = (
     "https://datos.gob.mx/busca/api/action/datastore_search"
     "?resource_id=fc1e3b7b-4027-4c59-9e5a-f02f48e90ca1&limit=5000"
@@ -105,7 +107,7 @@ VAR_LABEL  = {
 }
 
 # ══════════════════════════════════════════════
-# ETL — ESTRICTO (100% DATOS REALES, CERO SIMULACIÓN)
+# ETL — ESTRICTO (100% DATOS REALES)
 # ══════════════════════════════════════════════
 def fetch_inegi_serie(indicador, fuente="BIE", geo="00"):
     url = (
@@ -162,7 +164,8 @@ def procesar_empleo():
 def procesar_ied():
     print("📥 Descargando IED...")
     try:
-        r=requests.get(SE_IED_URL,timeout=15); r.raise_for_status()
+        # 2. SE AUMENTÓ EL TIEMPO A 45 SEGUNDOS
+        r=requests.get(SE_IED_URL,timeout=45); r.raise_for_status()
         recs=r.json().get("result",{}).get("records",[])
         if not recs: raise ValueError("Sin registros")
         df=pd.DataFrame(recs)
@@ -206,7 +209,6 @@ def procesar_exportaciones():
 
 def construir_panel(df_emp,df_ied,df_act,df_exp):
     keys=["Estado","Año","Trimestre"]
-    # Usamos LEFT MERGE para no colapsar si la API del gobierno falla en 1 variable
     panel=pd.merge(df_emp, df_ied, on=keys, how="left")
     panel=pd.merge(panel, df_act, on=keys, how="left")
     panel=pd.merge(panel, df_exp, on=keys, how="left")
@@ -257,18 +259,17 @@ def get_datos():
 
 PANEL,GEOJSON=get_datos()
 if PANEL.empty:
-    AÑOS_DISPONIBLES = list(range(2018, 2026)) # Fallback if API totally fails on startup
+    AÑOS_DISPONIBLES = list(range(2018, 2026))
 else:
     AÑOS_DISPONIBLES=sorted(PANEL["Año"].unique())
 
 # ══════════════════════════════════════════════
-# ECONOMETRÍA — ACTUALIZADA CON REZAGOS (LAGS) Y PREDICCIÓN
+# ECONOMETRÍA
 # ══════════════════════════════════════════════
 def calcular_econometria(df, vars_x, lags=0):
     if df.empty or not vars_x: return None
     cols=["Empleo_Manufacturero"]+vars_x
     
-    # Validar que las columnas existan
     missing_cols = [c for c in cols if c not in df.columns]
     if missing_cols: return None
     
@@ -317,7 +318,7 @@ def calcular_econometria(df, vars_x, lags=0):
             "df_pred": df_pred}
 
 # ══════════════════════════════════════════════
-# FIGURAS — VISOR DE DATOS ORIGINAL / SCATTER OLS AGREGADO
+# FIGURAS
 # ══════════════════════════════════════════════
 H_CHART = 450
 
@@ -340,10 +341,13 @@ def fig_series(df, variable, estados, tipo="line"):
             fig.add_trace(go.Bar(x=sub["Periodo"],y=sub[col],name=est,
                 marker_color=COLORES_ESTADOS[est],
                 hovertemplate=f"<b>{est}</b><br>%{{x}}<br>{VAR_LABEL[variable]}: %{{y:,.1f}}<extra></extra>"))
+    
+    # 3. REPARACIÓN DE BARRAS APILADAS -> AHORA SON AGRUPADAS
     fig.update_layout(**{**PLOT_LAYOUT,
         "yaxis":dict(title=VAR_LABEL[variable],gridcolor="#EEE",tickformat=","),
         "xaxis":dict(tickangle=-45,tickfont_size=9),
-        "height":H_CHART,"barmode":"stack" if tipo=="bar" else "group"})
+        "height":H_CHART,
+        "barmode":"group"}) # <-- AQUÍ EL CAMBIO PARA BARRAS
     return fig
 
 def fig_mapa(df, variable, estados, yr_to, geojson):

@@ -1,8 +1,9 @@
 """
-Dashboard Econométrico — Región del Bajío (BASE SEGURA + MEJORAS PRO)
+Dashboard Econométrico — Región del Bajío (VERSIÓN ESTRICTA - CERO SIMULACIÓN)
 ========================================================
 UI: Fondo Crema, Pregunta de Investigación, Lags, DataTable.
-ETL/Visor: Base original 100% intacta.
+ETL: Estricto. Solo datos reales de INEGI y SE. Si falla, retorna vacío.
+Visor: Base original estable.
 """
 
 import os
@@ -94,11 +95,6 @@ GEOJSON_URLS = [
     "https://raw.githubusercontent.com/angelnmara/geojson/master/mexicoHigh.json",
 ]
 
-_EMP_BASE = {"Aguascalientes":95000,"Guanajuato":340000,"Jalisco":280000,"Querétaro":160000,"San Luis Potosí":110000}
-_IED_BASE = {"Aguascalientes":220,"Guanajuato":315,"Jalisco":430,"Querétaro":265,"San Luis Potosí":225}
-_ACT_BASE = {"Aguascalientes":108,"Guanajuato":115,"Jalisco":112,"Querétaro":120,"San Luis Potosí":106}
-_EXP_BASE = {"Aguascalientes":4200,"Guanajuato":9500,"Jalisco":7800,"Querétaro":5600,"San Luis Potosí":3900}
-
 VARS_DEF   = [("empleo","Empleo Manufacturero"),("ied","Inversión Extranjera Directa (IED)"),("actind","Actividad Manufacturera"),("exportaciones","Exportaciones Manufactureras")]
 VAR_COL    = {"empleo":"Empleo_Manufacturero","ied":"IED","actind":"ActInd","exportaciones":"Exportaciones"}
 VAR_LABEL  = {
@@ -109,7 +105,7 @@ VAR_LABEL  = {
 }
 
 # ══════════════════════════════════════════════
-# ETL — TU BASE 100% ORIGINAL (SIN CAMBIOS)
+# ETL — ESTRICTO (100% DATOS REALES, CERO SIMULACIÓN)
 # ══════════════════════════════════════════════
 def fetch_inegi_serie(indicador, fuente="BIE", geo="00"):
     url = (
@@ -127,10 +123,12 @@ def fetch_inegi_serie(indicador, fuente="BIE", geo="00"):
                     except: pass
         if not rows: raise ValueError("vacío")
         return pd.DataFrame(rows)
-    except:
+    except Exception as e:
+        print(f"❌ Error API INEGI ({indicador}): {e}")
         return pd.DataFrame(columns=["fecha","valor"])
 
 def _mensual_a_trim(df, estado, col):
+    if df.empty: return pd.DataFrame(columns=["Estado","Año","Trimestre",col])
     df["fecha"] = pd.to_datetime(df["fecha"], format="%Y/%m", errors="coerce")
     df = df.dropna(subset=["fecha"])
     df["Año"] = df["fecha"].dt.year; df["Mes"] = df["fecha"].dt.month
@@ -139,6 +137,7 @@ def _mensual_a_trim(df, estado, col):
     return df.groupby([pd.Series([estado]*len(df),name="Estado"),"Año","Trimestre"])["valor"].mean().reset_index().rename(columns={"valor":col})
 
 def _parse_trim(df, estado, col):
+    if df.empty: return pd.DataFrame(columns=["Estado","Año","Trimestre",col])
     rows=[]
     for _,row in df.iterrows():
         t=str(row["fecha"]).replace("-","/")
@@ -148,115 +147,81 @@ def _parse_trim(df, estado, col):
         except: pass
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["Estado","Año","Trimestre",col])
 
-def _sim_empleo(estado):
-    rng=np.random.default_rng(abs(hash(estado))%(2**32)); base=_EMP_BASE.get(estado,100000); rows=[]
-    for yr in YEARS:
-        for m in range(1,13):
-            if yr==2025 and m>3: break
-            t=(yr-2015)*12+m
-            rows.append({"fecha":pd.Timestamp(yr,m,1),"valor":int(base*(1+0.018*t/12)*rng.uniform(0.97,1.03)*[.97,.98,1.,.101,1.02,1.02,1.01,1.01,1.,.99,.98,.97][m-1])})
-    return pd.DataFrame(rows)
-
-def _sim_ied():
-    rows=[]
-    for estado,base in _IED_BASE.items():
-        rng=np.random.default_rng(abs(hash(estado+"ied"))%(2**32))
-        for yr in YEARS:
-            for q in range(1,5):
-                if yr==2025 and q>1: break
-                t=(yr-2015)*4+q
-                rows.append({"Estado":estado,"Año":yr,"Trimestre":q,"IED":round(base*(1+0.02*t)*rng.uniform(0.88,1.20)*[1.,1.1,1.05,1.15][q-1],1)})
-    return pd.DataFrame(rows)
-
-def _sim_actind():
-    rows=[]
-    for estado,base in _ACT_BASE.items():
-        rng=np.random.default_rng(abs(hash(estado+"act"))%(2**32))
-        for yr in YEARS:
-            for q in range(1,5):
-                if yr==2025 and q>1: break
-                t=(yr-2015)*4+q
-                rows.append({"Estado":estado,"Año":yr,"Trimestre":q,"ActInd":round(base*(1+0.015*t)*rng.uniform(0.94,1.06)*[.98,1.01,1.02,.99][q-1],1)})
-    return pd.DataFrame(rows)
-
-def _sim_exportaciones():
-    rows=[]
-    for estado,base in _EXP_BASE.items():
-        rng=np.random.default_rng(abs(hash(estado+"exp"))%(2**32))
-        for yr in YEARS:
-            for q in range(1,5):
-                if yr==2025 and q>1: break
-                t=(yr-2015)*4+q
-                rows.append({"Estado":estado,"Año":yr,"Trimestre":q,"Exportaciones":round(base*(1+0.022*t)*rng.uniform(0.85,1.18)*[.95,1.05,1.08,1.12][q-1],1)})
-    return pd.DataFrame(rows)
-
 def procesar_empleo():
+    print("📥 Descargando Empleo Manufacturero...")
     frames=[]
     for estado,ind in INDICADORES_EMPLEO.items():
-        df=fetch_inegi_serie(ind,fuente="BIE-BISE")
-        if df.empty:
-            sim=_sim_empleo(estado); sim["Estado"]=estado; sim["Año"]=sim["fecha"].dt.year; sim["Mes"]=sim["fecha"].dt.month
-            sim=sim[(sim["Año"]>=2015)&(sim["Año"]<=2025)]; sim["Trimestre"]=sim["Mes"].apply(lambda m:(m-1)//3+1)
-            df_t=sim.groupby(["Estado","Año","Trimestre"])["valor"].mean().reset_index().rename(columns={"valor":"Empleo_Manufacturero"})
-        else:
-            df_t=_mensual_a_trim(df,estado,"Empleo_Manufacturero")
-        df_t["Empleo_Manufacturero"]=df_t["Empleo_Manufacturero"].round(0).astype(int)
-        frames.append(df_t)
-    return pd.concat(frames,ignore_index=True)
+        df = fetch_inegi_serie(ind,fuente="BIE-BISE")
+        if not df.empty:
+            df_t = _mensual_a_trim(df,estado,"Empleo_Manufacturero")
+            if not df_t.empty:
+                df_t["Empleo_Manufacturero"] = df_t["Empleo_Manufacturero"].round(0).astype(int)
+                frames.append(df_t)
+    return pd.concat(frames,ignore_index=True) if frames else pd.DataFrame(columns=["Estado","Año","Trimestre","Empleo_Manufacturero"])
 
 def procesar_ied():
+    print("📥 Descargando IED...")
     try:
         r=requests.get(SE_IED_URL,timeout=15); r.raise_for_status()
         recs=r.json().get("result",{}).get("records",[])
-        if not recs: raise ValueError()
+        if not recs: raise ValueError("Sin registros")
         df=pd.DataFrame(recs)
         ce=next((c for c in df.columns if "entidad" in c.lower() or "estado" in c.lower()),None)
         ca=next((c for c in df.columns if "año" in c.lower() or "anio" in c.lower()),None)
         ct=next((c for c in df.columns if "trim" in c.lower()),None)
         ci=next((c for c in df.columns if "ied" in c.lower() or "inversion" in c.lower()),None)
-        if not all([ce,ca,ct,ci]): raise ValueError()
+        if not all([ce,ca,ct,ci]): raise ValueError("Columnas no mapeadas")
         df=df.rename(columns={ce:"Estado",ca:"Año",ct:"Trimestre",ci:"IED"})
-        df=df[df["Estado"].str.strip().isin(ESTADOS_BAJIO.keys())]
+        
+        df["Estado"] = df["Estado"].astype(str).str.strip()
+        df["Estado"] = df["Estado"].replace({"San Luis Potosi": "San Luis Potosí", "Queretaro": "Querétaro"})
+        df=df[df["Estado"].isin(ESTADOS_BAJIO.keys())]
+        
         for col in ["Año","Trimestre","IED"]: df[col]=pd.to_numeric(df[col],errors="coerce")
         df=df.dropna(); df=df[(df["Año"]>=2015)&(df["Año"]<=2025)]
         return df[["Estado","Año","Trimestre","IED"]]
-    except:
-        return _sim_ied()
+    except Exception as e:
+        print(f"❌ Error API IED: {e}")
+        return pd.DataFrame(columns=["Estado","Año","Trimestre","IED"])
 
 def procesar_actind():
+    print("📥 Descargando Actividad Industrial...")
     frames=[]
     for estado,ind in INDICADORES_ACTIND.items():
-        df=fetch_inegi_serie(ind,fuente="BIE-BISE")
-        if df.empty: frames.append(_sim_actind()[lambda d:d["Estado"]==estado])
-        else: frames.append(_mensual_a_trim(df,estado,"ActInd"))
-    result=pd.concat(frames,ignore_index=True)
-    return result if not result.empty else _sim_actind()
+        df = fetch_inegi_serie(ind,fuente="BIE-BISE")
+        if not df.empty:
+            df_t = _mensual_a_trim(df,estado,"ActInd")
+            if not df_t.empty: frames.append(df_t)
+    return pd.concat(frames,ignore_index=True) if frames else pd.DataFrame(columns=["Estado","Año","Trimestre","ActInd"])
 
 def procesar_exportaciones():
+    print("📥 Descargando Exportaciones...")
     frames=[]
     for estado,ind in INDICADORES_EXPORTACIONES.items():
-        df=fetch_inegi_serie(ind,fuente="BIE-BISE")
+        df = fetch_inegi_serie(ind,fuente="BIE-BISE")
         if not df.empty:
-            df_t=_parse_trim(df,estado,"Exportaciones")
-            if not df_t.empty: frames.append(df_t); continue
-        rng=np.random.default_rng(abs(hash(estado+"exp"))%(2**32)); base=_EXP_BASE.get(estado,5000); sim=[]
-        for yr in YEARS:
-            for q in range(1,5):
-                if yr==2025 and q>1: break
-                t=(yr-2015)*4+q
-                sim.append({"Estado":estado,"Año":yr,"Trimestre":q,"Exportaciones":round(base*(1+0.022*t)*rng.uniform(0.85,1.18)*[.95,1.05,1.08,1.12][q-1],1)})
-        frames.append(pd.DataFrame(sim))
-    return pd.concat(frames,ignore_index=True)
+            df_t = _parse_trim(df,estado,"Exportaciones")
+            if not df_t.empty: frames.append(df_t)
+    return pd.concat(frames,ignore_index=True) if frames else pd.DataFrame(columns=["Estado","Año","Trimestre","Exportaciones"])
 
 def construir_panel(df_emp,df_ied,df_act,df_exp):
     keys=["Estado","Año","Trimestre"]
-    panel=df_emp.merge(df_ied,on=keys,how="inner").merge(df_act,on=keys,how="left").merge(df_exp,on=keys,how="left")
+    # Usamos LEFT MERGE para no colapsar si la API del gobierno falla en 1 variable
+    panel=pd.merge(df_emp, df_ied, on=keys, how="left")
+    panel=pd.merge(panel, df_act, on=keys, how="left")
+    panel=pd.merge(panel, df_exp, on=keys, how="left")
+    
+    if panel.empty:
+        return panel
+        
     panel=panel[panel["Estado"].isin(ESTADOS_BAJIO.keys())].copy()
     panel=panel.sort_values(["Estado","Año","Trimestre"]).reset_index(drop=True)
     panel["Var_Empleo_pct"]=(panel.groupby("Estado")["Empleo_Manufacturero"].pct_change()*100).round(2)
     panel["Periodo"]=panel["Año"].astype(str)+" Q"+panel["Trimestre"].astype(str)
+    
     for col in ["ActInd","Exportaciones"]:
-        panel[col]=panel.groupby("Estado")[col].transform(lambda x:x.interpolate(limit_direction="both"))
+        if col in panel.columns:
+            panel[col]=panel.groupby("Estado")[col].transform(lambda x:x.interpolate(limit_direction="both"))
     return panel
 
 def cargar_geojson():
@@ -274,7 +239,7 @@ def cargar_geojson():
     ]}
 
 # ══════════════════════════════════════════════
-# CACHÉ — TU BASE ORIGINAL
+# CACHÉ
 # ══════════════════════════════════════════════
 _cache={"panel":None,"geojson":None,"fecha":None,"lock":threading.Lock()}
 
@@ -291,18 +256,25 @@ def get_datos():
     return _cache["panel"],_cache["geojson"]
 
 PANEL,GEOJSON=get_datos()
-AÑOS_DISPONIBLES=sorted(PANEL["Año"].unique())
+if PANEL.empty:
+    AÑOS_DISPONIBLES = list(range(2018, 2026)) # Fallback if API totally fails on startup
+else:
+    AÑOS_DISPONIBLES=sorted(PANEL["Año"].unique())
 
 # ══════════════════════════════════════════════
 # ECONOMETRÍA — ACTUALIZADA CON REZAGOS (LAGS) Y PREDICCIÓN
 # ══════════════════════════════════════════════
 def calcular_econometria(df, vars_x, lags=0):
-    if not vars_x: return None
+    if df.empty or not vars_x: return None
     cols=["Empleo_Manufacturero"]+vars_x
+    
+    # Validar que las columnas existan
+    missing_cols = [c for c in cols if c not in df.columns]
+    if missing_cols: return None
+    
     sub=df[["Estado","Año","Trimestre","Periodo"]+cols].dropna().copy()
     sub=sub.sort_values(["Estado","Año","Trimestre"])
     
-    # Aplicar rezago a las variables independientes
     for c in vars_x:
         if lags > 0:
             sub[c] = sub.groupby("Estado")[c].shift(lags)
@@ -310,7 +282,6 @@ def calcular_econometria(df, vars_x, lags=0):
     sub=sub.dropna()
     if len(sub)<20: return None
     
-    # Calcular tasas
     for c in cols:
         sub[f"Crec_{c}"]=sub.groupby("Estado")[c].pct_change()*100
         
@@ -326,7 +297,6 @@ def calcular_econometria(df, vars_x, lags=0):
         res=mod.fit(cov_type="clustered",cluster_entity=True)
         dw_stat=durbin_watson(res.resids.values)
         
-        # Recuperar valores predichos
         pred = res.fitted_values
         sub_index["Prediccion"] = pred
         df_pred = sub_index.reset_index()[["Estado", "Periodo", "Crec_Empleo_Manufacturero", "Prediccion"]]
@@ -347,12 +317,14 @@ def calcular_econometria(df, vars_x, lags=0):
             "df_pred": df_pred}
 
 # ══════════════════════════════════════════════
-# FIGURAS — VISOR DE DATOS MANTENIDO / SCATTER OLS AGREGADO
+# FIGURAS — VISOR DE DATOS ORIGINAL / SCATTER OLS AGREGADO
 # ══════════════════════════════════════════════
 H_CHART = 450
 
 def fig_series(df, variable, estados, tipo="line"):
     col=VAR_COL.get(variable,"Empleo_Manufacturero")
+    if col not in df.columns or df.empty: return go.Figure().update_layout(**PLOT_LAYOUT, title="Datos no disponibles")
+    
     fig=go.Figure()
     for est in estados:
         sub=df[df["Estado"]==est].sort_values(["Año","Trimestre"])
@@ -364,7 +336,7 @@ def fig_series(df, variable, estados, tipo="line"):
             fig.add_trace(go.Scatter(x=sub["Periodo"],y=sub[col],name=est,mode="lines",
                 stackgroup='one', line=dict(color=COLORES_ESTADOS[est],width=1),
                 hovertemplate=f"<b>{est}</b><br>%{{x}}<br>{VAR_LABEL[variable]}: %{{y:,.1f}}<extra></extra>"))
-        else:  # bar
+        else:
             fig.add_trace(go.Bar(x=sub["Periodo"],y=sub[col],name=est,
                 marker_color=COLORES_ESTADOS[est],
                 hovertemplate=f"<b>{est}</b><br>%{{x}}<br>{VAR_LABEL[variable]}: %{{y:,.1f}}<extra></extra>"))
@@ -374,9 +346,10 @@ def fig_series(df, variable, estados, tipo="line"):
         "height":H_CHART,"barmode":"stack" if tipo=="bar" else "group"})
     return fig
 
-# TU MAPA COROPLÉTICO ORIGINAL
 def fig_mapa(df, variable, estados, yr_to, geojson):
     col=VAR_COL.get(variable,"Empleo_Manufacturero")
+    if col not in df.columns or df.empty: return go.Figure().update_layout(**PLOT_LAYOUT, title="Datos no disponibles")
+    
     sub=df[(df["Estado"].isin(estados))&(df["Año"]==yr_to)]
     grp=sub.groupby("Estado")[col].mean().reset_index().rename(columns={col:"valor"})
     grp=pd.DataFrame({"Estado":list(ESTADOS_BAJIO.keys())}).merge(grp,on="Estado",how="left")
@@ -392,16 +365,19 @@ def fig_mapa(df, variable, estados, yr_to, geojson):
     fig.update_layout(**{**PLOT_LAYOUT,"height":H_CHART,"margin":dict(l=0,r=0,t=20,b=0)})
     return fig
 
-# TU SCATTER HANS ROSLING ORIGINAL
 def fig_scatter_animado(df, var_x, var_y, estados):
     col_x=VAR_COL.get(var_x,"IED")
     col_y=VAR_COL.get(var_y,"Empleo_Manufacturero")
+    if col_x not in df.columns or col_y not in df.columns or df.empty: return go.Figure().update_layout(**PLOT_LAYOUT, title="Datos insuficientes")
+    
     sub=df[df["Estado"].isin(estados)].copy()
     sub_anual=sub.groupby(["Estado","Año"]).agg(
         x=(col_x,"mean"), y=(col_y,"mean"),
         size_col=("Empleo_Manufacturero","mean")
     ).reset_index()
-    sub_anual["size_col"] = (sub_anual["size_col"] / sub_anual["size_col"].max() * 60 + 10).round(1)
+    
+    max_size = sub_anual["size_col"].max()
+    sub_anual["size_col"] = (sub_anual["size_col"] / max_size * 60 + 10).round(1) if pd.notna(max_size) and max_size > 0 else 10
     sub_anual["Año_str"] = sub_anual["Año"].astype(str)
 
     fig = px.scatter(
@@ -427,11 +403,14 @@ def fig_scatter_animado(df, var_x, var_y, estados):
     })
     return fig
 
-# EL NUEVO SCATTER OLS ESTÁTICO (Para el visor)
 def fig_scatter_ols(df, var_x, var_y, estados):
     col_x = VAR_COL.get(var_x, "IED")
     col_y = VAR_COL.get(var_y, "Empleo_Manufacturero")
-    sub = df[df["Estado"].isin(estados)].copy()
+    if col_x not in df.columns or col_y not in df.columns or df.empty: return go.Figure().update_layout(**PLOT_LAYOUT, title="Datos insuficientes para tendencia OLS")
+    
+    sub = df[df["Estado"].isin(estados)].dropna(subset=[col_x, col_y]).copy()
+    if len(sub) < 2: return go.Figure().update_layout(**PLOT_LAYOUT, title="Datos insuficientes para tendencia OLS")
+    
     fig = px.scatter(sub, x=col_x, y=col_y, color="Estado", color_discrete_map=COLORES_ESTADOS,
         trendline="ols", hover_data=["Periodo"], labels={col_x: VAR_LABEL[var_x], col_y: VAR_LABEL[var_y]})
     fig.update_traces(marker=dict(size=7, opacity=0.7))
@@ -439,7 +418,6 @@ def fig_scatter_ols(df, var_x, var_y, estados):
         "yaxis": dict(title=VAR_LABEL[var_y], gridcolor="#EEE"), "height": H_CHART})
     return fig
 
-# LA NUEVA PREDICCIÓN (Para el laboratorio)
 def fig_prediccion(df_pred, estado):
     sub = df_pred[df_pred["Estado"] == estado]
     if sub.empty: return go.Figure().update_layout(**PLOT_LAYOUT, height=350)
@@ -451,6 +429,8 @@ def fig_prediccion(df_pred, estado):
 
 def fig_heatmap(df, variable, estados):
     col=VAR_COL.get(variable,"Empleo_Manufacturero")
+    if col not in df.columns or df.empty: return go.Figure().update_layout(**PLOT_LAYOUT, title="Datos no disponibles")
+    
     sub=df[df["Estado"].isin(estados)]
     piv=sub.pivot_table(index="Estado",columns="Trimestre",values=col,aggfunc="mean").round(1)
     piv.columns=[f"Q{c}" for c in piv.columns]
@@ -461,6 +441,7 @@ def fig_heatmap(df, variable, estados):
     return fig
 
 def fig_correlacion(corr_df):
+    if corr_df is None or corr_df.empty: return go.Figure().update_layout(**PLOT_LAYOUT, height=350)
     labels=[c.replace("Crec_","") for c in corr_df.columns]
     z=corr_df.values
     fig=go.Figure(go.Heatmap(z=z,x=labels,y=labels,
@@ -492,7 +473,6 @@ app=dash.Dash(__name__,title="Panel Bajío · Econométrico",
     meta_tags=[{"name":"viewport","content":"width=device-width, initial-scale=1"}])
 server=app.server
 
-# Controles compartidos
 CONTROLES = html.Div(style={**CARD,"marginBottom":"16px"},children=[
     html.Div(style={"display":"flex","flexWrap":"wrap","gap":"24px","alignItems":"flex-start"},children=[
         html.Div([
@@ -522,7 +502,6 @@ app.layout=html.Div(
     style={"fontFamily":"'Helvetica Neue',Arial,sans-serif","background":BG,"minHeight":"100vh","padding":"20px 24px","maxWidth":"1400px","margin":"0 auto"},
     children=[
 
-    # Header
     html.Div(style={"marginBottom":"20px"},children=[
         html.H1("Panel Econométrico — Región del Bajío",
             style={"fontSize":"28px","fontWeight":"bold","margin":"0 0 4px","color":TEXT_PRIM}),
@@ -530,7 +509,6 @@ app.layout=html.Div(
             style={"fontSize":"14px","color":TEXT_SEC,"margin":"0"}),
     ]),
 
-    # Tarjeta de Pregunta de Investigación
     html.Div(style={**CARD, "background": "#EBF5FB", "borderColor": "#D6EAF8", "borderLeft": f"5px solid {AZUL_OSCURO}"}, children=[
         html.P("🔍 Pregunta de Investigación Central", style={"fontSize": "14px", "fontWeight": "bold", "color": AZUL_OSCURO, "margin": "0 0 6px"}),
         html.P("¿Existe una relación positiva entre la Inversión Extranjera Directa (IED), utilizada como proxy del nearshoring, y el empleo manufacturero en San Luis Potosí respecto a los demás estados del Bajío?", 
@@ -541,29 +519,21 @@ app.layout=html.Div(
         ], style={"display": "flex", "gap": "20px", "fontSize": "12px", "color": TEXT_SEC})
     ]),
 
-    # Métricas
     html.Div(id="metrics-row",style={"display":"flex","gap":"10px","flexWrap":"wrap","marginBottom":"16px"}),
 
-    # Stores
     dcc.Store(id="active-estados",data=list(ESTADOS_BAJIO.keys())),
     dcc.Store(id="active-var",data="empleo"),
 
-    # Controles
     CONTROLES,
 
-    # ── TABS ──────────────────────────────────
     dcc.Tabs(id="main-tabs",value="tab-visor",
         style={"marginBottom":"16px"},
         children=[
 
-        # ─────────────────────────────────────
-        # TAB 1: VISOR DE DATOS
-        # ─────────────────────────────────────
         dcc.Tab(label="📊 Visor de Datos", value="tab-visor",
             style=TAB_STYLE, selected_style=TAB_SEL,
             children=[
 
-            # Serie de tiempo
             html.Div(style=CARD,children=[
                 html.P("Serie de tiempo trimestral",style=SEC_HDR),
                 html.Div(style={"display":"flex","alignItems":"center","gap":"16px","margin":"6px 0 12px 14px"},children=[
@@ -580,14 +550,12 @@ app.layout=html.Div(
                 dcc.Graph(id="series-chart",config={"displayModeBar":False}),
             ]),
 
-            # Mapa full width (Original Choropleth)
             html.Div(style=CARD,children=[
                 html.P("Mapa del Bajío",style=SEC_HDR),
                 html.P(id="map-sub",style=SUB),
                 dcc.Graph(id="map-chart",config={"displayModeBar":False}),
             ]),
 
-            # Scatter animado full width
             html.Div(style=CARD,children=[
                 html.P("Animación Hans Rosling — Evolución temporal",style=SEC_HDR),
                 html.Div(style={"display":"flex","flexWrap":"wrap","gap":"16px","margin":"6px 0 12px 14px","alignItems":"center"},children=[
@@ -609,14 +577,12 @@ app.layout=html.Div(
                 dcc.Graph(id="scatter-chart",config={"displayModeBar":False}),
             ]),
 
-            # Scatter OLS (Betas y Tendencias)
             html.Div(style=CARD,children=[
                 html.P("Análisis de Dispersión Estático con Tendencia (OLS)",style=SEC_HDR),
                 html.P("Muestra la relación lineal (Betas) para todo el periodo. Pasa el cursor sobre la línea para ver el R².",style=SUB),
                 dcc.Graph(id="scatter-ols",config={"displayModeBar":False}),
             ]),
 
-            # Heatmap estacional full width
             html.Div(style=CARD,children=[
                 html.P("Patrón estacional por trimestre",style=SEC_HDR),
                 html.P("Promedio del período seleccionado",style=SUB),
@@ -624,9 +590,6 @@ app.layout=html.Div(
             ]),
         ]),
 
-        # ─────────────────────────────────────
-        # TAB 2: LABORATORIO ECONOMÉTRICO
-        # ─────────────────────────────────────
         dcc.Tab(label="🔬 Laboratorio Econométrico", value="tab-eco",
             style=TAB_STYLE, selected_style=TAB_SEL,
             children=[
@@ -692,15 +655,11 @@ app.layout=html.Div(
             ]),
         ]),
 
-        # ─────────────────────────────────────
-        # TAB 3: BASE DE DATOS
-        # ─────────────────────────────────────
         dcc.Tab(label="🗃 Base de Datos", value="tab-datos",
             style=TAB_STYLE, selected_style=TAB_SEL,
             children=[
             html.Div(style={"marginTop":"16px"},children=[
                 
-                # Diccionario de Datos
                 html.Div(style={**CARD, "background": "#FDFCF8", "borderColor": CAFE}, children=[
                     html.P("📖 Diccionario de Datos (Metadata)", style={"fontSize": "15px", "fontWeight": "bold", "color": CAFE, "margin": "0 0 10px"}),
                     html.Table([
@@ -776,7 +735,6 @@ def toggle_var(_,av):
             style=BTN_VAR_ON if ia else {**BTN_BASE,"borderRadius":"6px"}))
     return btns,av
 
-# ── VISOR DE DATOS ────────────────────────────
 @app.callback(
     Output("metrics-row","children"),
     Output("series-chart","figure"), Output("map-chart","figure"),
@@ -789,20 +747,30 @@ def toggle_var(_,av):
 )
 def update_visor(estados,variable,yr_from,yr_to,tipo,sx,sy):
     panel,geojson=get_datos()
-    df=panel[(panel["Estado"].isin(estados))&(panel["Año"]>=yr_from)&(panel["Año"]<=yr_to)].copy()
-    n=len(df)
+    if panel.empty:
+        df = pd.DataFrame()
+        n = 0
+    else:
+        df=panel[(panel["Estado"].isin(estados))&(panel["Año"]>=yr_from)&(panel["Año"]<=yr_to)].copy()
+        n=len(df)
 
     def m(l,v,s): return html.Div(style=METRIC_CARD,children=[
         html.P(l,style={"fontSize":"10px","color": "#FFFFFF","opacity": 0.8,"textTransform":"uppercase","fontWeight":"bold","margin":"0 0 3px"}),
         html.P(v,style={"fontSize":"22px","fontWeight":"bold","color": "#FFFFFF","margin":"0","lineHeight":"1.1"}),
         html.P(s,style={"fontSize":"11px","color": "#F4EFEA","opacity": 0.9,"margin":"2px 0 0"}),
     ])
+    
+    col_emp = "Empleo_Manufacturero"
+    col_ied = "IED"
+    col_act = "ActInd"
+    col_exp = "Exportaciones"
+
     metrics=[
         m("Observaciones",f"{n:,}","trim. × estados"),
-        m("Empleo prom.",f"{int(df['Empleo_Manufacturero'].mean()):,}" if n else "—","personas/trim."),
-        m("IED prom.",f"${df['IED'].mean():.1f}M" if n else "—","USD/trim."),
-        m("Act. Manufacturera",f"{df['ActInd'].mean():.1f}" if n else "—","índice 2013=100"),
-        m("Exportaciones",f"${df['Exportaciones'].mean():.1f}M" if n else "—","USD/trim."),
+        m("Empleo prom.",f"{int(df[col_emp].mean()):,}" if not df.empty and col_emp in df.columns and not df[col_emp].isna().all() else "—","personas/trim."),
+        m("IED prom.",f"${df[col_ied].mean():.1f}M" if not df.empty and col_ied in df.columns and not df[col_ied].isna().all() else "—","USD/trim."),
+        m("Act. Manufacturera",f"{df[col_act].mean():.1f}" if not df.empty and col_act in df.columns and not df[col_act].isna().all() else "—","índice 2013=100"),
+        m("Exportaciones",f"${df[col_exp].mean():.1f}M" if not df.empty and col_exp in df.columns and not df[col_exp].isna().all() else "—","USD/trim."),
     ]
 
     f_ser  = fig_series(df,variable,estados,tipo)
@@ -814,7 +782,6 @@ def update_visor(estados,variable,yr_from,yr_to,tipo,sx,sy):
     return (metrics, f_ser, f_map, f_scat, f_ols, f_heat,
             VAR_LABEL[variable], f"Intensidad promedio {yr_to} · {VAR_LABEL[variable]}")
 
-# ── ECONOMETRÍA ───────────────────────────────
 @app.callback(
     Output("tabla-regresion", "children"), Output("insights-panel", "children"), 
     Output("robustez-panel", "children"), Output("corr-chart", "figure"), Output("prediccion-chart", "figure"),
@@ -823,11 +790,15 @@ def update_visor(estados,variable,yr_from,yr_to,tipo,sx,sy):
 )
 def update_eco(estados, _, yr_from, yr_to, vars_x, lags, estado_pred):
     panel, _geo = get_datos()
+    no_data = html.P("Selecciona variables y amplía el período.", style={"fontSize": "13px", "color": TEXT_SEC, "padding": "12px"})
+    
+    if panel.empty:
+        return no_data, no_data, no_data, go.Figure(), go.Figure()
+        
     df = panel[(panel["Estado"].isin(estados)) & (panel["Año"] >= yr_from) & (panel["Año"] <= yr_to)].copy()
     vars_x = vars_x or []
-    eco = calcular_econometria(df, [VAR_COL[v] for v in vars_x], lags)
+    eco = calcular_econometria(df, [VAR_COL.get(v, v) for v in vars_x], lags)
     
-    no_data = html.P("Selecciona variables y amplía el período.", style={"fontSize": "13px", "color": TEXT_SEC, "padding": "12px"})
     if eco is None: 
         return no_data, no_data, no_data, go.Figure(), go.Figure()
 
@@ -886,26 +857,45 @@ def update_eco(estados, _, yr_from, yr_to, vars_x, lags, estado_pred):
     ])
 
     f_pred = fig_prediccion(eco["df_pred"], estado_pred)
+    f_corr = fig_correlacion(eco["corr"])
 
-    return tabla_reg, panel_insights, robustez, fig_correlacion(eco["corr"]), f_pred
+    return tabla_reg, panel_insights, robustez, f_corr, f_pred
 
-# ── BASE DE DATOS ─────────────────────────────
 @app.callback(
     Output("tabla-avanzada-container", "children"), Output("tabla-sub", "children"),
     Input("active-estados", "data"), Input("year-from", "value"), Input("year-to", "value"),
 )
 def update_tabla(estados, yr_from, yr_to):
     panel, _ = get_datos()
+    if panel.empty:
+        return html.P("No hay datos reales disponibles.", style={"color": TEXT_SEC, "padding": "20px"}), "Total: 0 observaciones"
+        
     df = panel[(panel["Estado"].isin(estados)) & (panel["Año"] >= yr_from) & (panel["Año"] <= yr_to)].copy()
     df = df.sort_values(["Año", "Trimestre", "Estado"], ascending=[False, False, True])
     
-    df["Empleo_Manufacturero"] = df["Empleo_Manufacturero"].apply(lambda x: f"{int(x):,}" if pd.notna(x) else "N/A")
-    df["IED"] = df["IED"].apply(lambda x: f"${x:.1f} M" if pd.notna(x) else "N/A")
-    df["ActInd"] = df["ActInd"].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "N/A")
-    df["Exportaciones"] = df["Exportaciones"].apply(lambda x: f"${x:.1f} M" if pd.notna(x) else "N/A")
-    df["Var_Empleo_pct"] = df["Var_Empleo_pct"].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A")
+    col_emp = "Empleo_Manufacturero" if "Empleo_Manufacturero" in df.columns else None
+    col_ied = "IED" if "IED" in df.columns else None
+    col_act = "ActInd" if "ActInd" in df.columns else None
+    col_exp = "Exportaciones" if "Exportaciones" in df.columns else None
     
-    df_show = df[["Estado", "Año", "Trimestre", "Empleo_Manufacturero", "IED", "ActInd", "Exportaciones", "Var_Empleo_pct"]]
+    if col_emp: df["Empleo"] = df[col_emp].apply(lambda x: f"{int(x):,}" if pd.notna(x) else "N/A")
+    else: df["Empleo"] = "N/A"
+    
+    if col_ied: df["IED_str"] = df[col_ied].apply(lambda x: f"${x:.1f} M" if pd.notna(x) else "N/A")
+    else: df["IED_str"] = "N/A"
+    
+    if col_act: df["Act_Ind"] = df[col_act].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "N/A")
+    else: df["Act_Ind"] = "N/A"
+    
+    if col_exp: df["Exp"] = df[col_exp].apply(lambda x: f"${x:.1f} M" if pd.notna(x) else "N/A")
+    else: df["Exp"] = "N/A"
+    
+    if "Var_Empleo_pct" in df.columns:
+        df["Crec_Empleo"] = df["Var_Empleo_pct"].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A")
+    else:
+        df["Crec_Empleo"] = "N/A"
+    
+    df_show = df[["Estado", "Año", "Trimestre", "Empleo", "IED_str", "Act_Ind", "Exp", "Crec_Empleo"]]
     df_show.columns = ["Estado", "Año", "Trim.", "Empleo", "IED", "Act. Ind.", "Exportaciones", "Crec. Empleo"]
 
     tabla_avanzada = dash_table.DataTable(
@@ -928,6 +918,7 @@ def update_tabla(estados, yr_from, yr_to):
 )
 def descargar_csv(n, estados, yr_from, yr_to):
     panel, _ = get_datos()
+    if panel.empty: return None
     df = panel[(panel["Estado"].isin(estados)) & (panel["Año"] >= yr_from) & (panel["Año"] <= yr_to)]
     return dcc.send_data_frame(df.to_csv, "panel_econometrico_bajio.csv", index=False)
 

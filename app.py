@@ -618,10 +618,11 @@ app.layout = html.Div(
         html.P("🔍 Pregunta de Investigación Central", style={"fontSize": "14px", "fontWeight": "bold", "color": AZUL_OSCURO, "margin": "0 0 6px"}),
         html.P("¿Existe una relación positiva entre la Inversión Extranjera Directa (IED), utilizada como proxy del nearshoring, y el empleo manufacturero en San Luis Potosí respecto a los demás estados del Bajío?", 
                style={"fontSize": "14px", "color": TEXT_PRIM, "fontStyle": "italic", "margin": "0 0 10px"}),
-        html.Div(style={"display": "flex", "gap": "20px"}, children=[
-            html.Div([html.Span("H₀ (Nula):", style={"fontWeight": "bold"}), " No existe una relación positiva significativa."]),
-            html.Div([html.Span("H₁ (Alternativa):", style={"fontWeight": "bold"}), " Sí existe una relación positiva significativa."])
-        ], style={"fontSize": "12px", "color": TEXT_SEC})
+        
+    html.Div(children=[
+        html.Div([html.Span("H₀ (Nula):", style={"fontWeight": "bold"}), " No existe una relación positiva significativa."]),
+        html.Div([html.Span("H₁ (Alternativa):", style={"fontWeight": "bold"}), " Sí existe una relación positiva significativa."])
+], style={"display": "flex", "gap": "20px", "fontSize": "12px", "color": TEXT_SEC})
     ]),
 
     # Métricas

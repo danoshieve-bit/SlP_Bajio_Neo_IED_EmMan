@@ -1,9 +1,8 @@
 """
-Dashboard Econométrico — Región del Bajío (VERSIÓN ESTRICTA CORREGIDA)
+Dashboard Econométrico — Región del Bajío (VERSIÓN ESTRICTA CSV)
 ========================================================
 UI: Fondo Crema, Pregunta de Investigación, Lags, DataTable.
-ETL: Claves INEGI restauradas, IED a 45s.
-Visor: Barras agrupadas (no apiladas).
+ETL: IED desde CSV Local, Actividad Eliminada, Cero Simulaciones.
 """
 
 import os
@@ -65,7 +64,6 @@ PLOT_LAYOUT = dict(
     legend=dict(orientation="h", y=-0.15, x=0, font_size=11),
 )
 
-# 1. CLAVES ORIGINALES RESTAURADAS (Mi error corregido)
 INDICADORES_EMPLEO = {
     "Aguascalientes":  "702846",
     "Guanajuato":      "702855",
@@ -73,13 +71,7 @@ INDICADORES_EMPLEO = {
     "Querétaro":       "702866",
     "San Luis Potosí": "702868",
 }
-INDICADORES_ACTIND = {
-    "Aguascalientes":  "738413",
-    "Guanajuato":      "738423",
-    "Jalisco":         "738426",
-    "Querétaro":       "738434",
-    "San Luis Potosí": "738436",
-}
+
 INDICADORES_EXPORTACIONES = {
     "Aguascalientes":  "739268",
     "Guanajuato":      "739277",
@@ -88,26 +80,22 @@ INDICADORES_EXPORTACIONES = {
     "San Luis Potosí": "739280",
 }
 
-SE_IED_URL = (
-    "https://datos.gob.mx/busca/api/action/datastore_search"
-    "?resource_id=fc1e3b7b-4027-4c59-9e5a-f02f48e90ca1&limit=5000"
-)
 GEOJSON_URLS = [
     "https://raw.githubusercontent.com/PhantomInsights/mexican-geojson/main/src/states/states.json",
     "https://raw.githubusercontent.com/angelnmara/geojson/master/mexicoHigh.json",
 ]
 
-VARS_DEF   = [("empleo","Empleo Manufacturero"),("ied","Inversión Extranjera Directa (IED)"),("actind","Actividad Manufacturera"),("exportaciones","Exportaciones Manufactureras")]
-VAR_COL    = {"empleo":"Empleo_Manufacturero","ied":"IED","actind":"ActInd","exportaciones":"Exportaciones"}
+# ACTIVIDAD ELIMINADA DE AQUÍ:
+VARS_DEF   = [("empleo","Empleo Manufacturero"),("ied","Inversión Extranjera Directa (IED)"),("exportaciones","Exportaciones Manufactureras")]
+VAR_COL    = {"empleo":"Empleo_Manufacturero","ied":"IED","exportaciones":"Exportaciones"}
 VAR_LABEL  = {
     "empleo":        "Empleo Manufacturero (personas)",
     "ied":           "Inversión Extranjera Directa (IED) (M USD)",
-    "actind":        "Actividad Manufacturera (base 2013=100)",
     "exportaciones": "Exportaciones Manufactureras (M USD)",
 }
 
 # ══════════════════════════════════════════════
-# ETL — ESTRICTO (100% DATOS REALES)
+# ETL — ESTRICTO (100% DATOS REALES Y CSV)
 # ══════════════════════════════════════════════
 def fetch_inegi_serie(indicador, fuente="BIE", geo="00"):
     url = (
@@ -161,41 +149,46 @@ def procesar_empleo():
                 frames.append(df_t)
     return pd.concat(frames,ignore_index=True) if frames else pd.DataFrame(columns=["Estado","Año","Trimestre","Empleo_Manufacturero"])
 
+# FUNCIÓN ACTUALIZADA A CSV LOCAL
 def procesar_ied():
-    print("📥 Descargando IED...")
+    print("📁 Cargando IED desde archivo local (ied_historica.csv)...")
     try:
-        # 2. SE AUMENTÓ EL TIEMPO A 45 SEGUNDOS
-        r=requests.get(SE_IED_URL,timeout=45); r.raise_for_status()
-        recs=r.json().get("result",{}).get("records",[])
-        if not recs: raise ValueError("Sin registros")
-        df=pd.DataFrame(recs)
-        ce=next((c for c in df.columns if "entidad" in c.lower() or "estado" in c.lower()),None)
-        ca=next((c for c in df.columns if "año" in c.lower() or "anio" in c.lower()),None)
-        ct=next((c for c in df.columns if "trim" in c.lower()),None)
-        ci=next((c for c in df.columns if "ied" in c.lower() or "inversion" in c.lower()),None)
-        if not all([ce,ca,ct,ci]): raise ValueError("Columnas no mapeadas")
-        df=df.rename(columns={ce:"Estado",ca:"Año",ct:"Trimestre",ci:"IED"})
+        try:
+            df = pd.read_csv("ied_historica.csv", encoding="utf-8")
+        except UnicodeDecodeError:
+            df = pd.read_csv("ied_historica.csv", encoding="latin1")
+            
+        df = df[["entidad", "anio", "trimestre", "millones_de_dolares"]].copy()
+        df.rename(columns={
+            "entidad": "Estado",
+            "anio": "Año",
+            "trimestre": "Trimestre",
+            "millones_de_dolares": "IED"
+        }, inplace=True)
         
         df["Estado"] = df["Estado"].astype(str).str.strip()
-        df["Estado"] = df["Estado"].replace({"San Luis Potosi": "San Luis Potosí", "Queretaro": "Querétaro"})
-        df=df[df["Estado"].isin(ESTADOS_BAJIO.keys())]
+        df["Estado"] = df["Estado"].replace({
+            "San Luis Potosi": "San Luis Potosí", 
+            "Queretaro": "Querétaro"
+        })
         
-        for col in ["Año","Trimestre","IED"]: df[col]=pd.to_numeric(df[col],errors="coerce")
-        df=df.dropna(); df=df[(df["Año"]>=2015)&(df["Año"]<=2025)]
-        return df[["Estado","Año","Trimestre","IED"]]
+        df = df[df["Estado"].isin(ESTADOS_BAJIO.keys())]
+        
+        for col in ["Año", "Trimestre", "IED"]: 
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+            
+        df = df.dropna(subset=["Año", "Trimestre", "IED"])
+        df = df[(df["Año"] >= 2015) & (df["Año"] <= 2025)]
+        
+        df = df.groupby(["Estado", "Año", "Trimestre"])["IED"].sum().reset_index()
+        return df[["Estado", "Año", "Trimestre", "IED"]]
+        
+    except FileNotFoundError:
+        print("❌ Error: No se encontró 'ied_historica.csv'.")
+        return pd.DataFrame(columns=["Estado", "Año", "Trimestre", "IED"])
     except Exception as e:
-        print(f"❌ Error API IED: {e}")
-        return pd.DataFrame(columns=["Estado","Año","Trimestre","IED"])
-
-def procesar_actind():
-    print("📥 Descargando Actividad Industrial...")
-    frames=[]
-    for estado,ind in INDICADORES_ACTIND.items():
-        df = fetch_inegi_serie(ind,fuente="BIE-BISE")
-        if not df.empty:
-            df_t = _mensual_a_trim(df,estado,"ActInd")
-            if not df_t.empty: frames.append(df_t)
-    return pd.concat(frames,ignore_index=True) if frames else pd.DataFrame(columns=["Estado","Año","Trimestre","ActInd"])
+        print(f"❌ Error archivo local IED: {e}")
+        return pd.DataFrame(columns=["Estado", "Año", "Trimestre", "IED"])
 
 def procesar_exportaciones():
     print("📥 Descargando Exportaciones...")
@@ -207,10 +200,10 @@ def procesar_exportaciones():
             if not df_t.empty: frames.append(df_t)
     return pd.concat(frames,ignore_index=True) if frames else pd.DataFrame(columns=["Estado","Año","Trimestre","Exportaciones"])
 
-def construir_panel(df_emp,df_ied,df_act,df_exp):
+# ACTIVIDAD ELIMINADA DEL CONSTRUCTOR
+def construir_panel(df_emp,df_ied,df_exp):
     keys=["Estado","Año","Trimestre"]
     panel=pd.merge(df_emp, df_ied, on=keys, how="left")
-    panel=pd.merge(panel, df_act, on=keys, how="left")
     panel=pd.merge(panel, df_exp, on=keys, how="left")
     
     if panel.empty:
@@ -221,9 +214,8 @@ def construir_panel(df_emp,df_ied,df_act,df_exp):
     panel["Var_Empleo_pct"]=(panel.groupby("Estado")["Empleo_Manufacturero"].pct_change()*100).round(2)
     panel["Periodo"]=panel["Año"].astype(str)+" Q"+panel["Trimestre"].astype(str)
     
-    for col in ["ActInd","Exportaciones"]:
-        if col in panel.columns:
-            panel[col]=panel.groupby("Estado")[col].transform(lambda x:x.interpolate(limit_direction="both"))
+    if "Exportaciones" in panel.columns:
+        panel["Exportaciones"]=panel.groupby("Estado")["Exportaciones"].transform(lambda x:x.interpolate(limit_direction="both"))
     return panel
 
 def cargar_geojson():
@@ -252,8 +244,8 @@ def get_datos():
     with _cache["lock"]:
         if _cache["panel"] is not None and _cache["fecha"]==hoy:
             return _cache["panel"],_cache["geojson"]
-        df_emp=procesar_empleo(); df_ied=procesar_ied(); df_act=procesar_actind(); df_exp=procesar_exportaciones()
-        panel=construir_panel(df_emp,df_ied,df_act,df_exp); geo=cargar_geojson()
+        df_emp=procesar_empleo(); df_ied=procesar_ied(); df_exp=procesar_exportaciones()
+        panel=construir_panel(df_emp,df_ied,df_exp); geo=cargar_geojson()
         _cache["panel"]=panel; _cache["geojson"]=geo; _cache["fecha"]=hoy
     return _cache["panel"],_cache["geojson"]
 
@@ -342,12 +334,11 @@ def fig_series(df, variable, estados, tipo="line"):
                 marker_color=COLORES_ESTADOS[est],
                 hovertemplate=f"<b>{est}</b><br>%{{x}}<br>{VAR_LABEL[variable]}: %{{y:,.1f}}<extra></extra>"))
     
-    # 3. REPARACIÓN DE BARRAS APILADAS -> AHORA SON AGRUPADAS
     fig.update_layout(**{**PLOT_LAYOUT,
         "yaxis":dict(title=VAR_LABEL[variable],gridcolor="#EEE",tickformat=","),
         "xaxis":dict(tickangle=-45,tickfont_size=9),
         "height":H_CHART,
-        "barmode":"group"}) # <-- AQUÍ EL CAMBIO PARA BARRAS
+        "barmode":"group"})
     return fig
 
 def fig_mapa(df, variable, estados, yr_to, geojson):
@@ -509,7 +500,7 @@ app.layout=html.Div(
     html.Div(style={"marginBottom":"20px"},children=[
         html.H1("Panel Econométrico — Región del Bajío",
             style={"fontSize":"28px","fontWeight":"bold","margin":"0 0 4px","color":TEXT_PRIM}),
-        html.P("Impacto del Nearshoring: Empleo, IED, Actividad y Exportaciones Manufactureras (2018–2025)",
+        html.P("Impacto del Nearshoring: Empleo, IED y Exportaciones Manufactureras (2015–2025)",
             style={"fontSize":"14px","color":TEXT_SEC,"margin":"0"}),
     ]),
 
@@ -613,7 +604,7 @@ app.layout=html.Div(
                         html.P("1. Selecciona las variables independientes (X):", style={"fontSize": "12px", "color": TEXT_SEC, "fontWeight": "bold", "margin": "0 0 8px"}),
                         dcc.Checklist(id="vars-modelo",
                             options=[{"label": f"  {l}", "value": v} for v, l in VARS_DEF if v != "empleo"],
-                            value=["ied", "actind", "exportaciones"], inline=True, inputStyle={"marginRight": "6px"}, labelStyle={"marginRight": "24px", "fontSize": "13px"},
+                            value=["ied", "exportaciones"], inline=True, inputStyle={"marginRight": "6px"}, labelStyle={"marginRight": "24px", "fontSize": "13px"},
                         ),
                     ]),
                     html.Div([
@@ -671,7 +662,6 @@ app.layout=html.Div(
                         html.Tbody([
                             html.Tr([html.Td("Empleo Manufacturero"), html.Td("Personas ocupadas (Total)"), html.Td("INEGI (EMIM - BIE)")]),
                             html.Tr([html.Td("Inversión Extranjera Directa (IED)"), html.Td("Millones de Dólares (USD)"), html.Td("Secretaría de Economía")]),
-                            html.Tr([html.Td("Actividad Manufacturera"), html.Td("Índice de Volumen Físico (Base 2013=100)"), html.Td("INEGI (BISE)")]),
                             html.Tr([html.Td("Exportaciones Manufactureras"), html.Td("Millones de Dólares (USD)"), html.Td("INEGI (BISE)")])
                         ])
                     ], style={"width": "100%", "textAlign": "left", "fontSize": "12px", "color": TEXT_PRIM})
@@ -766,14 +756,12 @@ def update_visor(estados,variable,yr_from,yr_to,tipo,sx,sy):
     
     col_emp = "Empleo_Manufacturero"
     col_ied = "IED"
-    col_act = "ActInd"
     col_exp = "Exportaciones"
 
     metrics=[
         m("Observaciones",f"{n:,}","trim. × estados"),
         m("Empleo prom.",f"{int(df[col_emp].mean()):,}" if not df.empty and col_emp in df.columns and not df[col_emp].isna().all() else "—","personas/trim."),
         m("IED prom.",f"${df[col_ied].mean():.1f}M" if not df.empty and col_ied in df.columns and not df[col_ied].isna().all() else "—","USD/trim."),
-        m("Act. Manufacturera",f"{df[col_act].mean():.1f}" if not df.empty and col_act in df.columns and not df[col_act].isna().all() else "—","índice 2013=100"),
         m("Exportaciones",f"${df[col_exp].mean():.1f}M" if not df.empty and col_exp in df.columns and not df[col_exp].isna().all() else "—","USD/trim."),
     ]
 
@@ -806,7 +794,7 @@ def update_eco(estados, _, yr_from, yr_to, vars_x, lags, estado_pred):
     if eco is None: 
         return no_data, no_data, no_data, go.Figure(), go.Figure()
 
-    nombres = {"Empleo_Manufacturero": "Empleo Mfr.", "IED": "Inversión Extranjera Directa (IED)", "ActInd": "Actividad Mfr.", "Exportaciones": "Exportaciones Manufactureras"}
+    nombres = {"Empleo_Manufacturero": "Empleo Mfr.", "IED": "Inversión Extranjera Directa (IED)", "Exportaciones": "Exportaciones Manufactureras"}
     
     hdr = html.Tr([html.Th(c, style={"fontWeight": "bold", "fontSize": "12px", "color": TEXT_SEC, "padding": "8px 12px", "borderBottom": "2px solid #E5E0D8", "textAlign": al}) for c, al in [("Variable (Crec. Δ%)", "left"), ("Coeficiente (Elasticidad)", "right"), ("P-value", "right")]])
     filas = []
@@ -879,7 +867,6 @@ def update_tabla(estados, yr_from, yr_to):
     
     col_emp = "Empleo_Manufacturero" if "Empleo_Manufacturero" in df.columns else None
     col_ied = "IED" if "IED" in df.columns else None
-    col_act = "ActInd" if "ActInd" in df.columns else None
     col_exp = "Exportaciones" if "Exportaciones" in df.columns else None
     
     if col_emp: df["Empleo"] = df[col_emp].apply(lambda x: f"{int(x):,}" if pd.notna(x) else "N/A")
@@ -887,9 +874,6 @@ def update_tabla(estados, yr_from, yr_to):
     
     if col_ied: df["IED_str"] = df[col_ied].apply(lambda x: f"${x:.1f} M" if pd.notna(x) else "N/A")
     else: df["IED_str"] = "N/A"
-    
-    if col_act: df["Act_Ind"] = df[col_act].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "N/A")
-    else: df["Act_Ind"] = "N/A"
     
     if col_exp: df["Exp"] = df[col_exp].apply(lambda x: f"${x:.1f} M" if pd.notna(x) else "N/A")
     else: df["Exp"] = "N/A"
@@ -899,8 +883,8 @@ def update_tabla(estados, yr_from, yr_to):
     else:
         df["Crec_Empleo"] = "N/A"
     
-    df_show = df[["Estado", "Año", "Trimestre", "Empleo", "IED_str", "Act_Ind", "Exp", "Crec_Empleo"]]
-    df_show.columns = ["Estado", "Año", "Trim.", "Empleo", "IED", "Act. Ind.", "Exportaciones", "Crec. Empleo"]
+    df_show = df[["Estado", "Año", "Trimestre", "Empleo", "IED_str", "Exp", "Crec_Empleo"]]
+    df_show.columns = ["Estado", "Año", "Trim.", "Empleo", "IED", "Exportaciones", "Crec. Empleo"]
 
     tabla_avanzada = dash_table.DataTable(
         data=df_show.to_dict('records'),

@@ -1,9 +1,9 @@
 """
-Dashboard Econométrico — Región del Bajío (VERSIÓN FINAL)
+Dashboard Econométrico — Región del Bajío (VERSIÓN FINAL PURIFICADA)
 ========================================================
 UI: Fondo Crema, Insights de Negocio, Títulos limpios.
 ETL: IED desde CSV Local, Empleo/Exp desde INEGI.
-Fixes: Mapa Inteligente, Animación Blindada.
+Fixes: _parse_trim restaurado (cero duplicación), Clave Ags corregida.
 """
 
 import os
@@ -73,8 +73,9 @@ INDICADORES_EMPLEO = {
     "San Luis Potosí": "702868",
 }
 
+# CLAVES CORREGIDAS EN SECUENCIA PERFECTA
 INDICADORES_EXPORTACIONES = {
-    "Aguascalientes":  "739268",
+    "Aguascalientes":  "739276",  
     "Guanajuato":      "739277",
     "Jalisco":         "739278",
     "Querétaro":       "739279",
@@ -126,6 +127,7 @@ def _mensual_a_trim(df, estado, col):
     df["Trimestre"] = df["Mes"].apply(lambda m:(m-1)//3+1)
     return df.groupby([pd.Series([estado]*len(df),name="Estado"),"Año","Trimestre"])["valor"].mean().reset_index().rename(columns={"valor":col})
 
+# RESTAURADA A SU VERSIÓN ORIGINAL SIN DUPLICACIONES
 def _parse_trim(df, estado, col):
     if df.empty: return pd.DataFrame(columns=["Estado","Año","Trimestre",col])
     rows=[]
@@ -134,20 +136,12 @@ def _parse_trim(df, estado, col):
         try:
             p=t.split("/")
             yr=int(p[0])
-            # Forzamos a que el periodo contenga información de trimestre (ej. 2021/01 o 2021/T1)
-            qn_str = p[1].upper().replace("Q","").replace("T","").strip()
-            qn=int(qn_str)
-            
-            # Si el INEGI manda un mes (1 a 12), lo convertimos a trimestre
-            if 1 <= qn <= 12 and "/" in t and len(qn_str) == 2:
-                qn = (qn - 1) // 3 + 1
-            
-            # Filtro estricto: Si no es trimestre del 1 al 4, se ignora (así eliminamos datos anuales '00')
+            qn=int(p[1].replace("Q","").replace("T",""))
             if 2015<=yr<=2025 and (1 <= qn <= 4): 
                 rows.append({"Estado":estado,"Año":yr,"Trimestre":qn,col:row["valor"]})
         except: pass
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["Estado","Año","Trimestre",col])
-    
+
 def procesar_empleo():
     print("📥 Descargando Empleo Manufacturero...")
     frames=[]
@@ -607,7 +601,6 @@ app.layout=html.Div(
                 dcc.Graph(id="scatter-chart",config={"displayModeBar":False}),
             ]),
 
-            # AQUÍ EL TÍTULO NUEVO DE LA GRÁFICA OLS
             html.Div(style=CARD,children=[
                 html.P("Relación Histórica y Tendencia Lineal",style=SEC_HDR),
                 html.P("Muestra la correlación general para todo el periodo. Pasa el cursor sobre la línea para ver el R².",style=SUB),
@@ -621,7 +614,7 @@ app.layout=html.Div(
             ]),
         ]),
 
-        dcc.Tab(label="🔬 Laboratorio Econométrico", value="tab-eco",
+        dcc.Tab(label="🎚 Laboratorio Econométrico", value="tab-eco",
             style=TAB_STYLE, selected_style=TAB_SEL,
             children=[
 
@@ -849,7 +842,6 @@ def update_eco(estados, _, yr_from, yr_to, vars_x, lags, estado_pred):
             html.Td(f"{pval:.4f}", style={"padding": "8px 12px", "fontSize": "13px", "textAlign": "right", "color": pcol, "fontWeight": "bold"}),
         ]))
         
-        # AQUÍ ESTÁ EL TRADUCTOR DE NEGOCIO NUEVO
         if pd.notna(pval):
             if pval < 0.05:
                 accion = "crece" if coef > 0 else "disminuye"

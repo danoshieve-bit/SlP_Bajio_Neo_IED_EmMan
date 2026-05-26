@@ -1,9 +1,9 @@
 """
-Dashboard Econométrico — Región del Bajío (VERSIÓN ESTRICTA CSV)
+Dashboard Econométrico — Región del Bajío (VERSIÓN FINAL)
 ========================================================
-UI: Fondo Crema, Pregunta de Investigación, Lags, DataTable.
-ETL: IED desde CSV Local, Actividad Eliminada, Cero Simulaciones.
-Fixes: Mapa Inteligente (retrocede si no hay datos), Animación Blindada.
+UI: Fondo Crema, Insights de Negocio, Títulos limpios.
+ETL: IED desde CSV Local, Empleo/Exp desde INEGI.
+Fixes: Mapa Inteligente, Animación Blindada.
 """
 
 import os
@@ -308,7 +308,7 @@ def calcular_econometria(df, vars_x, lags=0):
             "df_pred": df_pred}
 
 # ══════════════════════════════════════════════
-# FIGURAS (NUEVO: MAPA INTELIGENTE Y ANIMACIÓN BLINDADA)
+# FIGURAS
 # ══════════════════════════════════════════════
 H_CHART = 450
 
@@ -339,14 +339,11 @@ def fig_series(df, variable, estados, tipo="line"):
         "barmode":"group"})
     return fig
 
-# FIX #1: MAPA INTELIGENTE (RETROCEDE DE AÑO SI NO HAY DATOS)
 def fig_mapa(df, variable, estados, yr_to, geojson):
     col=VAR_COL.get(variable,"Empleo_Manufacturero")
     if col not in df.columns or df.empty: return go.Figure().update_layout(**PLOT_LAYOUT, title="Datos no disponibles")
     
     sub = df[df["Estado"].isin(estados)].copy()
-    
-    # Busca el año más reciente disponible que sea menor o igual a yr_to
     valid_years = sub.dropna(subset=[col])["Año"].unique()
     actual_yr = yr_to
     if len(valid_years) > 0 and yr_to not in valid_years:
@@ -370,7 +367,6 @@ def fig_mapa(df, variable, estados, yr_to, geojson):
     fig.update_layout(**{**PLOT_LAYOUT,"height":H_CHART,"margin":dict(l=0,r=0,t=20,b=0)})
     return fig
 
-# FIX #2: ANIMACIÓN BLINDADA (EVITA EL COLAPSO CON FFILL)
 def fig_scatter_animado(df, var_x, var_y, estados):
     col_x=VAR_COL.get(var_x,"IED")
     col_y=VAR_COL.get(var_y,"Empleo_Manufacturero")
@@ -382,7 +378,6 @@ def fig_scatter_animado(df, var_x, var_y, estados):
         size_col=("Empleo_Manufacturero","mean")
     ).reset_index()
     
-    # Relleno matemático para evitar que Plotly se rompa si falta 1 estado en 1 año
     all_years = sorted(sub_anual["Año"].unique())
     idx = pd.MultiIndex.from_product([estados, all_years], names=['Estado', 'Año'])
     sub_anual = sub_anual.set_index(['Estado', 'Año']).reindex(idx).reset_index()
@@ -396,7 +391,6 @@ def fig_scatter_animado(df, var_x, var_y, estados):
     sub_anual["Año_str"] = sub_anual["Año"].astype(str)
     sub_anual = sub_anual.sort_values(["Año", "Estado"])
 
-    # Ejes estables
     min_x, max_x = sub_anual["x"].min(), sub_anual["x"].max()
     min_y, max_y = sub_anual["y"].min(), sub_anual["y"].max()
     pad_x = (max_x - min_x) * 0.1 if pd.notna(min_x) and max_x != min_x else 10
@@ -431,10 +425,10 @@ def fig_scatter_animado(df, var_x, var_y, estados):
 def fig_scatter_ols(df, var_x, var_y, estados):
     col_x = VAR_COL.get(var_x, "IED")
     col_y = VAR_COL.get(var_y, "Empleo_Manufacturero")
-    if col_x not in df.columns or col_y not in df.columns or df.empty: return go.Figure().update_layout(**PLOT_LAYOUT, title="Datos insuficientes para tendencia OLS")
+    if col_x not in df.columns or col_y not in df.columns or df.empty: return go.Figure().update_layout(**PLOT_LAYOUT, title="Datos insuficientes")
     
     sub = df[df["Estado"].isin(estados)].dropna(subset=[col_x, col_y]).copy()
-    if len(sub) < 2: return go.Figure().update_layout(**PLOT_LAYOUT, title="Datos insuficientes para tendencia OLS")
+    if len(sub) < 2: return go.Figure().update_layout(**PLOT_LAYOUT, title="Datos insuficientes")
     
     fig = px.scatter(sub, x=col_x, y=col_y, color="Estado", color_discrete_map=COLORES_ESTADOS,
         trendline="ols", hover_data=["Periodo"], labels={col_x: VAR_LABEL[var_x], col_y: VAR_LABEL[var_y]})
@@ -602,9 +596,10 @@ app.layout=html.Div(
                 dcc.Graph(id="scatter-chart",config={"displayModeBar":False}),
             ]),
 
+            # AQUÍ EL TÍTULO NUEVO DE LA GRÁFICA OLS
             html.Div(style=CARD,children=[
-                html.P("Análisis de Dispersión Estático con Tendencia (OLS)",style=SEC_HDR),
-                html.P("Muestra la relación lineal (Betas) para todo el periodo. Pasa el cursor sobre la línea para ver el R².",style=SUB),
+                html.P("Relación Histórica y Tendencia Lineal",style=SEC_HDR),
+                html.P("Muestra la correlación general para todo el periodo. Pasa el cursor sobre la línea para ver el R².",style=SUB),
                 dcc.Graph(id="scatter-ols",config={"displayModeBar":False}),
             ]),
 
@@ -654,7 +649,7 @@ app.layout=html.Div(
                 ]),
                 html.Div(style=CARD, children=[
                     html.P("Traductor de Insights", style=SEC_HDR),
-                    html.P("Lectura automática de significancia estadística (P-valores):", style=SUB),
+                    html.P("Lectura automática de impacto al empleo:", style=SUB),
                     html.Div(id="insights-panel"),
                     html.Hr(style={"margin": "15px 0", "borderColor": "#E5E0D8"}),
                     html.P("Pruebas de Robustez:", style={"fontSize": "13px", "fontWeight": "bold", "color": TEXT_PRIM, "marginBottom": "10px"}),
@@ -843,12 +838,19 @@ def update_eco(estados, _, yr_from, yr_to, vars_x, lags, estado_pred):
             html.Td(f"{pval:.4f}", style={"padding": "8px 12px", "fontSize": "13px", "textAlign": "right", "color": pcol, "fontWeight": "bold"}),
         ]))
         
+        # AQUÍ ESTÁ EL TRADUCTOR DE NEGOCIO NUEVO
         if pd.notna(pval):
             if pval < 0.05:
-                rel = "positivamente" if coef > 0 else "negativamente"
-                insights.append(html.P(f"✅ {nom_humano} afecta {rel} al empleo de forma estadísticamente significativa.", style={"fontSize": "12px", "color": "#27AE60", "margin": "0 0 6px"}))
+                accion = "crece" if coef > 0 else "disminuye"
+                insights.append(html.Div([
+                    html.P(f"✅ {nom_humano} (Significativo)", style={"fontSize": "12px", "fontWeight": "bold", "color": "#27AE60", "margin": "0 0 2px"}),
+                    html.P(f"💡 Impacto: Por cada 1% de aumento en {nom_humano}, el Empleo Manufacturero {accion} un {abs(coef):.3f}%.", style={"fontSize": "12px", "color": TEXT_PRIM, "margin": "0 0 8px"})
+                ]))
             else:
-                insights.append(html.P(f"⚠️ {nom_humano} NO muestra un impacto estadísticamente significativo (P > 0.05).", style={"fontSize": "12px", "color": TEXT_SEC, "margin": "0 0 6px"}))
+                insights.append(html.Div([
+                    html.P(f"⚠️ {nom_humano} (No Significativo)", style={"fontSize": "12px", "fontWeight": "bold", "color": TEXT_SEC, "margin": "0 0 2px"}),
+                    html.P(f"Estadísticamente, no hay evidencia suficiente de que afecte al empleo (P > 0.05).", style={"fontSize": "12px", "color": TEXT_SEC, "margin": "0 0 8px"})
+                ]))
                 
     summary = [
         html.Tr([html.Td("R² within", style={"padding": "8px 12px", "fontSize": "12px", "color": TEXT_SEC}), html.Td("", ), html.Td(f"{eco['r2_within']:.4f}", style={"padding": "8px 12px", "fontSize": "13px", "textAlign": "right", "fontWeight": "bold"})]),

@@ -75,17 +75,17 @@ INDICADORES_EMPLEO = {
 }
 INDICADORES_ACTIND = {
     "Aguascalientes":  "738413",
-    "Guanajuato":      "738414",
-    "Jalisco":         "738415",
-    "Querétaro":       "738416",
-    "San Luis Potosí": "738417",
+    "Guanajuato":      "738423",
+    "Jalisco":         "738426",
+    "Querétaro":       "738434",
+    "San Luis Potosí": "738436",
 }
 INDICADORES_EXPORTACIONES = {
-    "Aguascalientes":  "127595",
-    "Guanajuato":      "739277",
-    "Jalisco":         "739278",
-    "Querétaro":       "739279",
-    "San Luis Potosí": "739280",
+    "Aguascalientes":  "739277",
+    "Guanajuato":      "739287",
+    "Jalisco":         "739290",
+    "Querétaro":       "739298",
+    "San Luis Potosí": "739300",
 }
 
 SE_IED_URL = (

@@ -132,11 +132,22 @@ def _parse_trim(df, estado, col):
     for _,row in df.iterrows():
         t=str(row["fecha"]).replace("-","/")
         try:
-            p=t.split("/"); yr=int(p[0]); qn=int(p[1].replace("Q","").replace("T",""))
-            if 2015<=yr<=2025: rows.append({"Estado":estado,"Año":yr,"Trimestre":qn,col:row["valor"]})
+            p=t.split("/")
+            yr=int(p[0])
+            # Forzamos a que el periodo contenga información de trimestre (ej. 2021/01 o 2021/T1)
+            qn_str = p[1].upper().replace("Q","").replace("T","").strip()
+            qn=int(qn_str)
+            
+            # Si el INEGI manda un mes (1 a 12), lo convertimos a trimestre
+            if 1 <= qn <= 12 and "/" in t and len(qn_str) == 2:
+                qn = (qn - 1) // 3 + 1
+            
+            # Filtro estricto: Si no es trimestre del 1 al 4, se ignora (así eliminamos datos anuales '00')
+            if 2015<=yr<=2025 and (1 <= qn <= 4): 
+                rows.append({"Estado":estado,"Año":yr,"Trimestre":qn,col:row["valor"]})
         except: pass
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["Estado","Año","Trimestre",col])
-
+    
 def procesar_empleo():
     print("📥 Descargando Empleo Manufacturero...")
     frames=[]

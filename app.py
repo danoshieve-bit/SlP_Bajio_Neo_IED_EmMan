@@ -81,11 +81,11 @@ INDICADORES_ACTIND = {
     "San Luis Potosí": "738436",
 }
 INDICADORES_EXPORTACIONES = {
-    "Aguascalientes":  "739277",
-    "Guanajuato":      "739287",
-    "Jalisco":         "739290",
-    "Querétaro":       "739298",
-    "San Luis Potosí": "739300",
+    "Aguascalientes":  "739268",
+    "Guanajuato":      "739277",
+    "Jalisco":         "739278",
+    "Querétaro":       "739279",
+    "San Luis Potosí": "739280",
 }
 
 SE_IED_URL = (
